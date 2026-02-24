@@ -1,12 +1,37 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import ChatWidget from "@/components/chat/ChatWidget";
 
 const Index = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold text-foreground">ShopAI</h1>
+          <p className="text-sm text-muted-foreground">Your AI Shopping Assistant</p>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-16 text-center">
+        <h2 className="text-4xl font-bold text-foreground mb-4">
+          Shop Smarter with AI
+        </h2>
+        <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-8">
+          Click the chat button to talk to our AI assistant. Get personalized product
+          recommendations, the best discounts, and guided shopping — in English or Hindi.
+        </p>
+        <div className="flex justify-center gap-3">
+          <span className="inline-flex items-center text-xs bg-accent text-accent-foreground rounded-full px-3 py-1.5">
+            🗣️ Voice + Text
+          </span>
+          <span className="inline-flex items-center text-xs bg-accent text-accent-foreground rounded-full px-3 py-1.5">
+            🇮🇳 English & Hindi
+          </span>
+          <span className="inline-flex items-center text-xs bg-accent text-accent-foreground rounded-full px-3 py-1.5">
+            🏷️ Auto Discounts
+          </span>
+        </div>
+      </main>
+
+      <ChatWidget />
     </div>
   );
 };
