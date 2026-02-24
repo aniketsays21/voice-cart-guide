@@ -70,7 +70,9 @@ rating: 4.5
 - If a user asks to buy or checkout, remind them to review their cart by tapping the cart icon in the header
 - Be conversational, warm, and helpful
 - If no products match, say so honestly and suggest what you do have
-- Keep responses concise but helpful`;
+- Keep responses concise but helpful
+- When a user message starts with "[The user is viewing the product", they are on the Product Detail Page for that specific product. Answer their question about THAT product only — do not recommend other products unless asked. Provide detailed info such as features, specs, materials, compatibility, warranty, etc.
+- If the user says "add this to cart", "buy this", or similar while viewing a product, confirm the item name and encourage them to tap the "Add to Cart" button on screen`;
 
 
     // Create or get conversation
