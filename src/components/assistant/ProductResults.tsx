@@ -51,12 +51,7 @@ const ProductResults: React.FC<ProductResultsProps> = ({ resultGroups = [], onPr
             <h2 className="text-lg font-bold text-foreground truncate">{group.query}</h2>
           </div>
 
-          {/* AI commentary */}
-          {group.commentary && (
-            <div className="mb-3 px-3 py-2 bg-accent rounded-lg">
-              <p className="text-xs text-accent-foreground">{group.commentary}</p>
-            </div>
-          )}
+          {/* Commentary hidden - voice only */}
 
           {/* Product grid */}
           {group.products.length > 0 && (
