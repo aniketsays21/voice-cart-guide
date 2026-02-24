@@ -1,82 +1,63 @@
 
 
-## Persistent Results + Product Detail Page (PDP) via Voice
+## Import Bella Vita Product Catalog
 
-### Overview
-Two enhancements: (1) keep previous product results visible when asking follow-up questions, appending/updating rather than replacing, and (2) allow users to tap a product card to open a detailed Product Detail Page (PDP) where they can ask voice questions about that specific product and add it to cart.
+### What's in Your File
+Your Excel file is a Shopify product export containing ~30 Bella Vita products across these categories:
+- **Perfumes** (Narco, Devil, Pure Musk, Beast, Ghost, CEO Woman, zodiac series like Taurus, Gemini, Leo, Virgo, Pisces, Aquarius)
+- **Skincare** (Detan Body Wash, Face Mask for Men, Sunscreen SPF 50)
+- **Shower Gels** (KLUB Man, DATE Woman)
+- **Gift Sets** (DC Women's, combo packs like Klub Man + White Oud, Date Woman + Glam Woman, etc.)
+- **Cosmetics** (Black Magic Duo hair powder)
+- **Attars** (TAAJ Ameer)
 
----
+Each product includes: name, price, compare-at price, images (Shopify CDN URLs), descriptions, and product handles.
 
-### Change 1: Preserve Previous Results on Follow-up
+### What Will Happen
 
-**File: `src/pages/Chat.tsx`**
+**Step 1: Clear existing demo products**
+Remove the current placeholder products (electronics, fashion, home items) and their discounts from the database.
 
-Currently, `send()` replaces `products` and `aiCommentary` entirely on each query. Instead:
-- Maintain a **results history** array: `Array<{ query: string; commentary: string; products: AssistantProduct[] }>`
-- Each new AI response appends a new entry to the array
-- `ProductResults` renders all entries in order (newest at top or bottom), so previous results stay visible while scrolling
-- When the AI responds with no products (e.g. a conversational follow-up), show just the commentary without clearing previous products
+**Step 2: Insert all Bella Vita products**
+Insert ~30 products into the `products` table, mapping:
+- **name** from Title column
+- **price** from Compare At Price (original MRP) when higher than sale price, otherwise Variant Price
+- **description** from Body HTML (cleaned to plain text)
+- **image_url** from Image Src (position 1 only -- the primary product photo)
+- **external_link** constructed as `https://bellavitaorganic.com/products/{handle}` (handle without "-cbd"/"-swiggy" suffix where applicable)
+- **category** mapped to: Perfume, Skincare, Shower Gel, Gift Set, Cosmetics, or Attar
+- **rating** set to 4.5 for bestsellers, 4.2 default (no rating data in spreadsheet)
 
-**File: `src/components/assistant/ProductResults.tsx`**
-- Update props to accept an array of result groups instead of a single flat list
-- Each group renders with its own query header and commentary, followed by its product grid
+**Step 3: Insert discounts**
+For products where Compare At Price > Variant Price (meaning there's a real discount), create entries in the `discounts` table with auto-generated coupon codes like "BELLA10", "BELLA20" based on discount percentage.
 
----
-
-### Change 2: Product Detail Page (PDP) Overlay
-
-**New file: `src/components/assistant/ProductDetailSheet.tsx`**
-
-A bottom sheet / full-screen overlay that opens when user taps a product card:
-- Large product image at top
-- Product name, price, discount badge, rating, description
-- "Add to Cart" button (same logic as grid cards)
-- A small voice/text input bar at the bottom to ask questions about THIS product (e.g. "Is this waterproof?", "What colors does it come in?")
-- AI responses about the product appear as brief text cards within the sheet
-- Close button to return to results grid
-
-**File: `src/components/assistant/ProductResults.tsx`**
-- Make each product card tappable (onClick opens the PDP sheet)
-- Pass selected product to the sheet
-
-**File: `src/pages/Chat.tsx`**
-- Add state for selected product (`selectedProduct: AssistantProduct | null`)
-- When PDP is open and user asks a question, prepend context to the AI message: "The user is viewing [product name]. They ask: [question]"
-- AI response shows inside the PDP sheet, not the main results area
-- "Add to Cart" in PDP adds the product and shows confirmation
-
-**File: `supabase/functions/chat/index.ts`**
-- Update system prompt to handle product-specific questions:
-  - "When a user asks about a specific product they are viewing, provide detailed information about that product only"
-  - "If user says 'add this to cart' or 'buy this', confirm the item and encourage them to tap the Add to Cart button"
-  - Keep existing instructions intact
-
----
+**Step 4: Update homepage category filters**
+Update `src/pages/Index.tsx` to replace the old filter tabs ("Electronics", "Fashion", "Home") with the new Bella Vita categories: "Perfume", "Skincare", "Gift Set", "Cosmetics", "Shower Gel", "Attar".
 
 ### Technical Details
 
-**State changes in Chat.tsx:**
+**Database operations (using insert tool):**
+- `DELETE FROM discounts;` -- remove old discounts
+- `DELETE FROM products;` -- remove old demo products
+- `INSERT INTO products (name, price, description, image_url, external_link, category, rating, tags)` for each product
+- `INSERT INTO discounts (coupon_code, discount_percent, applicable_category, is_active)` for category-wide discounts
 
-```text
-Current:  products: AssistantProduct[]
-New:      resultGroups: Array<{ query: string; commentary: string; products: AssistantProduct[] }>
-          selectedProduct: AssistantProduct | null
-          pdpMessages: Array<{ role: string; content: string }>
-```
+**File changes:**
+- `src/pages/Index.tsx` -- Update FILTERS array and category icons to match new product categories
 
-**ProductDetailSheet component structure:**
-- Uses the existing Vaul Drawer component for smooth bottom-sheet UX
-- Contains: image, details section, AI Q&A area, input bar
-- Sends questions through the same `chat` edge function but with product context prepended
-- Supports both voice (mic button) and text input
+**Products to be inserted (sample):**
 
-**Product card interaction:**
-- Short tap: opens PDP sheet
-- "Add to Cart" button: adds to cart (stops event propagation so it doesn't open PDP)
+| Product | Sale Price | MRP | Category |
+|---------|-----------|-----|----------|
+| Narco Unisex Perfume - 100ml | 399 | 899 | Perfume |
+| TAAJ Ameer Attar - 12ml | 299 | 599 | Attar |
+| DC Women's Gift Set | 499 | 799 | Gift Set |
+| Party Perfect Detan Body Wash | 299 | 349 | Skincare |
+| Suncare Brightening Sunscreen | 269 | 299 | Skincare |
+| Black Magic Duo | 649 | 1098 | Cosmetics |
+| Beast Perfume - 100ml | 799 | 899 | Perfume |
+| Taurus Perfume - 100ml | 899 | -- | Perfume |
+| ...and ~22 more products | | | |
 
-**Follow-up behavior:**
-- Results accumulate in the scrollable area
-- Each result group has a divider with the query text
-- New results appear at the top for easy visibility
-- A "Clear results" button optionally resets to idle state
+All product images will use the existing Shopify CDN URLs from your spreadsheet, so they'll load without needing to upload anything.
 
