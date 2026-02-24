@@ -1,91 +1,62 @@
 
 
-## AI E-commerce Shopping Assistant — MVP Plan
+## Sarvam AI Voice Assistant Integration
 
 ### Overview
-A multilingual (English + Hindi) AI shopping assistant that guides users through product discovery via text or voice conversation, recommends products, shares product links, applies the best available discounts, and redirects users to external stores for checkout. Includes an admin dashboard for setup and sentiment analytics.
+Add voice input (Speech-to-Text) and voice output (Text-to-Speech) to the AI Assistant chat page using Sarvam AI APIs, supporting English and Hindi.
 
 ---
 
-### Part 1: Customer-Facing Assistant (Chat Widget)
+### Step 1: Store the API Key Securely
+- Save the Sarvam AI API key (`SARVAM_API_KEY`) as a backend secret so it's only accessible from backend functions, never exposed to the browser.
 
-**1. Conversational Chat Interface**
-- A floating chat widget that opens as a sidebar/modal on the page
-- Text input with send button + voice input toggle (microphone button)
-- Chat bubbles for user messages and assistant responses
-- Assistant responses rendered with markdown support (for product cards, links, etc.)
-- Typing indicator while the assistant is thinking
+### Step 2: Create Two Backend Functions
 
-**2. Voice Conversation (Full Duplex)**
-- **Voice Input**: ElevenLabs real-time speech-to-text (`scribe_v2_realtime`) for capturing user speech in English and Hindi
-- **Voice Output**: ElevenLabs text-to-speech (`eleven_multilingual_v2`) so the assistant speaks back to the user
-- Toggle between text-only and voice mode
-- Visual indicator when assistant is speaking vs. listening
+**`sarvam-stt` (Speech-to-Text)**
+- Accepts audio data (base64-encoded WAV) from the frontend
+- Calls Sarvam AI `https://api.sarvam.ai/speech-to-text` with model `saaras:v2`
+- Returns the transcribed text back to the frontend
+- Supports English + Hindi auto-detection
 
-**3. AI-Powered Product Recommendations**
-- Powered by Lovable AI (Gemini) via edge function
-- The assistant understands user preferences, budget, and needs through conversation
-- Recommends products from your custom product database (stored in Supabase)
-- Displays product cards inline in chat (image, name, price, discount, rating)
-- Each product card has a "View Product" button that opens the external store link
+**`sarvam-tts` (Text-to-Speech)**
+- Accepts text + language code from the frontend
+- Calls Sarvam AI `https://api.sarvam.ai/text-to-speech` with model `bulbul:v2`
+- Returns base64-encoded audio for playback
+- Uses appropriate voice for Hindi vs English
 
-**4. Discount Engine**
-- Discounts/coupons loaded from a JSON/database source into Supabase
-- Assistant automatically finds the best applicable discount for the user's selected product
-- Shows original price vs. discounted price in the product card
-- When redirecting to external store, appends coupon code to the URL or instructs the user to apply it
+### Step 3: Add Voice UI to Chat Page (`Chat.tsx`)
 
-**5. Guided Shopping Journey**
-- Assistant stays active throughout: from discovery → product selection → adding to cart
-- Contextual follow-ups: "Would you like to see similar products?", "Ready to buy?"
-- When user is ready, assistant provides the direct link to the product page / add-to-cart page on the external store
-- Language detection: responds in the same language the user speaks/types (English or Hindi)
+**Microphone Button**
+- Add a mic icon button next to the send button in the input area
+- When tapped, starts recording audio using the browser's `MediaRecorder` API (WebM/WAV format)
+- Shows a visual "recording" indicator (pulsing red dot / animated mic icon)
+- When tapped again (or after silence), stops recording and sends audio to `sarvam-stt`
+- The transcribed text is automatically sent as a chat message
 
----
+**Speaker / Auto-Play**
+- After each assistant text response, automatically send the text to `sarvam-tts`
+- Play the returned audio using the Web Audio API
+- Show a small speaker icon on assistant messages indicating audio is playing
+- Add a toggle to enable/disable voice output (so users can use text-only if preferred)
 
-### Part 2: Admin Dashboard
-
-**6. Product & Discount Management**
-- Upload/manage products (name, description, price, image URL, external link, category, tags)
-- Upload/manage discount rules (coupon codes, discount %, applicable products, validity)
-- Import via JSON upload or manual entry
-
-**7. Agent Configuration**
-- Set the assistant's personality/tone and system prompt
-- Configure welcome message and suggested conversation starters
-- Enable/disable languages
-- Set the assistant's voice (choose ElevenLabs voice)
-
-**8. Conversation Analytics & Sentiment**
-- View all user conversations with the assistant
-- AI-powered sentiment analysis on each conversation (positive/neutral/negative)
-- Dashboard metrics: total conversations, conversion rate (clicked product link), top recommended products, language breakdown
-- Filterable by date range and sentiment
+### Step 4: Update `supabase/config.toml`
+- Register both new functions with `verify_jwt = false`
 
 ---
 
-### Technical Stack
+### Technical Details
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React + Tailwind + shadcn/ui |
-| Backend | Supabase (database, auth, edge functions) |
-| AI Brain | Lovable AI (Gemini) via edge functions |
-| Voice Input | ElevenLabs Speech-to-Text (real-time) |
-| Voice Output | ElevenLabs Text-to-Speech |
-| Product Data | Supabase database (custom tables) |
-| Discounts | Supabase database (loaded from JSON) |
-| Sentiment | Lovable AI analyzing conversation transcripts |
+```text
+User Flow:
+[Tap Mic] -> Record Audio -> [Stop] -> sarvam-stt -> Transcribed Text -> send() -> AI Response -> sarvam-tts -> Play Audio
+```
 
-### What You'll Need to Connect
-- **Lovable Cloud** — for database, edge functions, and AI
-- **ElevenLabs connector** — for voice input/output
+**Files to create:**
+- `supabase/functions/sarvam-stt/index.ts`
+- `supabase/functions/sarvam-tts/index.ts`
 
-### Build Order (MVP)
-1. Set up Lovable Cloud + database tables (products, discounts, conversations)
-2. Build the text chat interface with AI-powered product recommendations
-3. Add product cards with external store links and discount display
-4. Integrate ElevenLabs for voice input and voice output
-5. Build admin dashboard — product/discount management
-6. Add conversation logging and sentiment analysis dashboard
+**Files to modify:**
+- `src/pages/Chat.tsx` — add mic button, recording state, audio playback
+- `supabase/config.toml` — register new functions (auto-managed)
 
+**No new dependencies needed** — `MediaRecorder` and `Audio` are native browser APIs.
