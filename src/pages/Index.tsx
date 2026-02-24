@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Search, ShoppingCart, Menu, Star, ChevronLeft, ChevronRight, Grid2X2, TrendingUp, Percent } from "lucide-react";
+import { Search, ShoppingCart, Menu, Star, ChevronLeft, ChevronRight, Grid2X2, TrendingUp, Percent, Check } from "lucide-react";
+import { useCart } from "@/contexts/CartContext";
+import CartDrawer from "@/components/cart/CartDrawer";
+import { toast } from "sonner";
 
 type Product = {
   id: string;
@@ -27,7 +30,8 @@ const Index = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [discounts, setDiscounts] = useState<Discount[]>([]);
   const [activeFilter, setActiveFilter] = useState<string>("All");
-
+  const [cartOpen, setCartOpen] = useState(false);
+  const { addToCart, isInCart, totalItems } = useCart();
   useEffect(() => {
     const fetchData = async () => {
       const [{ data: prods }, { data: discs }] = await Promise.all([
@@ -66,7 +70,14 @@ const Index = () => {
           <h1 className="text-xl font-bold tracking-wider text-foreground">ShopAI</h1>
           <div className="flex items-center gap-4">
             <Search className="h-5 w-5 text-foreground" />
-            <ShoppingCart className="h-5 w-5 text-foreground" />
+            <button onClick={() => setCartOpen(true)} className="relative">
+              <ShoppingCart className="h-5 w-5 text-foreground" />
+              {totalItems > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">
+                  {totalItems}
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -173,14 +184,28 @@ const Index = () => {
                 </div>
 
                 {/* Add to Cart */}
-                <a
-                  href={product.external_link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 block w-full text-center text-xs font-semibold uppercase tracking-wider bg-foreground text-background rounded-lg py-2.5 hover:opacity-90 transition-opacity"
+                <button
+                  onClick={async () => {
+                    const pid = product.id;
+                    if (isInCart(pid)) return;
+                    await addToCart(
+                      { id: pid, name: product.name, price: product.price, image: product.image_url || undefined, link: product.external_link },
+                      product.category || undefined
+                    );
+                    toast.success(`${product.name} added to cart!`, { duration: 2000 });
+                  }}
+                  className={`mt-3 flex items-center justify-center gap-1.5 w-full text-xs font-semibold uppercase tracking-wider rounded-lg py-2.5 transition-opacity ${
+                    isInCart(product.id)
+                      ? "bg-accent text-accent-foreground"
+                      : "bg-foreground text-background hover:opacity-90"
+                  }`}
                 >
-                  Add to Cart
-                </a>
+                  {isInCart(product.id) ? (
+                    <><Check className="h-3.5 w-3.5" /> In Cart</>
+                  ) : (
+                    "Add to Cart"
+                  )}
+                </button>
               </div>
             </div>
           );
@@ -190,6 +215,7 @@ const Index = () => {
       {filtered.length === 0 && (
         <p className="text-center text-muted-foreground py-12 text-sm">No products found.</p>
       )}
+      <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
     </div>
   );
 };
