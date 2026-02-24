@@ -1,8 +1,6 @@
-import ChatWidget from "@/components/chat/ChatWidget";
-
 const Index = () => {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-16">
       <header className="border-b border-border">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-foreground">ShopAI</h1>
@@ -15,7 +13,7 @@ const Index = () => {
           Shop Smarter with AI
         </h2>
         <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-8">
-          Click the chat button to talk to our AI assistant. Get personalized product
+          Tap the AI Assistant tab below to talk to our AI assistant. Get personalized product
           recommendations, the best discounts, and guided shopping — in English or Hindi.
         </p>
         <div className="flex justify-center gap-3">
@@ -30,8 +28,6 @@ const Index = () => {
           </span>
         </div>
       </main>
-
-      <ChatWidget />
     </div>
   );
 };
