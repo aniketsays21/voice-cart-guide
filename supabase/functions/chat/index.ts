@@ -52,6 +52,7 @@ INSTRUCTIONS:
 
 :::product
 name: Product Name
+description: Short one-line description
 price: ₹1299
 discount_price: ₹999
 discount_code: SAVE20
