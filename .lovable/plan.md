@@ -2,56 +2,56 @@
 
 ## Sarvam AI Voice Assistant Integration
 
-### Overview
-Add a "tap to speak" microphone button to the AI Assistant chat page. Users tap the mic, speak in English or Hindi, and Sarvam AI transcribes their speech into text which is then sent as a chat message. Assistant responses are also spoken back using Sarvam AI text-to-speech.
+### What We'll Build
+A "tap to speak" microphone button in the AI Assistant chat. You speak in English or Hindi, Sarvam AI transcribes your speech, sends it as a message, and the assistant's response is spoken back to you.
 
 ---
 
-### Step 1: Store the Sarvam API Key
-- Add `SARVAM_API_KEY` as a secure backend secret (value: `sk_vu638xfv_wFhFSltFfATELxDLRPEjePCZ`)
-- This key is only accessible from backend functions, never exposed to the browser
+### Step 1: Store the Sarvam API Key Securely
+- Save `SARVAM_API_KEY` as a secure backend secret
+- Only accessible from backend functions, never exposed to the browser
 
-### Step 2: Create `sarvam-stt` Backend Function
-**File:** `supabase/functions/sarvam-stt/index.ts`
+### Step 2: Create Speech-to-Text Backend Function
+**New file:** `supabase/functions/sarvam-stt/index.ts`
 
 - Accepts base64-encoded audio from the frontend
-- Sends it to `https://api.sarvam.ai/speech-to-text` with model `saaras:v2`
-- Uses `api-subscription-key` header for authentication
-- Returns transcribed text to the frontend
-- Supports English and Hindi auto-detection
+- Sends it to Sarvam AI's speech-to-text API (`saaras:v2` model)
+- Returns the transcribed text
+- Auto-detects English and Hindi
 
-### Step 3: Create `sarvam-tts` Backend Function
-**File:** `supabase/functions/sarvam-tts/index.ts`
+### Step 3: Create Text-to-Speech Backend Function
+**New file:** `supabase/functions/sarvam-tts/index.ts`
 
-- Accepts text and optional language code from the frontend
-- Sends it to `https://api.sarvam.ai/text-to-speech` with model `bulbul:v2`
+- Accepts text and optional language code
+- Sends it to Sarvam AI's text-to-speech API (`bulbul:v2` model)
 - Returns base64-encoded audio for playback
-- Uses appropriate voice based on detected language
+- Uses appropriate voice for Hindi vs English
 
-### Step 4: Update Chat UI (`src/pages/Chat.tsx`)
+### Step 4: Add Voice UI to Chat Page
+**Modified file:** `src/pages/Chat.tsx`
 
-**Microphone Button:**
-- Add a mic icon button next to the send button
-- Tapping starts recording using the browser's `MediaRecorder` API
-- Shows a pulsing red animation while recording
-- Tapping again stops recording, converts audio to base64, and sends to `sarvam-stt`
-- Transcribed text is automatically sent as a chat message via the existing `send()` function
+**Microphone Button (next to send button):**
+- Tap to start recording (uses browser's native MediaRecorder API)
+- Pulsing red animation while recording
+- Tap again to stop -- audio is sent to the STT function
+- Transcribed text auto-sends as a chat message
 
 **Voice Playback:**
-- After each assistant response completes, send the text to `sarvam-tts`
-- Play the returned audio using the `Audio` API
-- Show a small speaker icon on assistant messages while audio plays
-- Add a voice toggle in the header to enable/disable auto-playback
+- After each assistant response, text is sent to TTS function
+- Audio plays automatically using the browser Audio API
+- Small speaker icon shown while audio plays
+- Voice toggle in the header to enable/disable auto-playback
 
-```text
-User Flow:
-[Tap Mic] --> Record Audio --> [Tap Stop] --> sarvam-stt --> Transcribed Text --> send() --> AI Response --> sarvam-tts --> Play Audio
-```
-
-### Step 5: Register Functions in Config
-- `supabase/config.toml` will auto-register `sarvam-stt` and `sarvam-tts` with `verify_jwt = false`
+### Step 5: Register Functions
+- Both `sarvam-stt` and `sarvam-tts` will be registered in the backend config
 
 ---
+
+### User Flow
+
+```text
+[Tap Mic] --> Record Audio --> [Tap Stop] --> STT --> Transcribed Text --> send() --> AI Response --> TTS --> Play Audio
+```
 
 ### Technical Details
 
@@ -60,9 +60,12 @@ User Flow:
 - `supabase/functions/sarvam-tts/index.ts` -- Text-to-Speech proxy
 
 **Files to modify:**
-- `src/pages/Chat.tsx` -- Add mic button, recording state, audio playback, voice toggle
+- `src/pages/Chat.tsx` -- Add mic button, recording logic, audio playback, voice toggle
+- `supabase/config.toml` -- Register new functions
 
-**No new npm dependencies needed** -- `MediaRecorder` and `Audio` are native browser APIs.
+**No new dependencies needed** -- MediaRecorder and Audio are native browser APIs.
 
-**Audio format:** MediaRecorder will record in WebM/opus format. The Sarvam STT API accepts WAV, so the edge function will handle the raw audio data. If needed, we can send the audio as-is since Sarvam also supports multiple formats.
-
+**Sarvam API details:**
+- STT endpoint: `https://api.sarvam.ai/speech-to-text` with `api-subscription-key` header
+- TTS endpoint: `https://api.sarvam.ai/text-to-speech` with `api-subscription-key` header
+- Audio format: MediaRecorder records WebM; Sarvam supports multiple formats including WAV
