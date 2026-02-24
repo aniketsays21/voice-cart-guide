@@ -1,71 +1,103 @@
 
 
-## Sarvam AI Voice Assistant Integration
+## In-Chat Shopping Cart with Auto-Applied Discounts
 
-### What We'll Build
-A "tap to speak" microphone button in the AI Assistant chat. You speak in English or Hindi, Sarvam AI transcribes your speech, sends it as a message, and the assistant's response is spoken back to you.
+### Overview
+Transform the chat experience into a complete shopping journey. Instead of redirecting users to external links, products recommended by the AI will have an "Add to Cart" button right inside the chat. A cart drawer will let users review items, and discounts will be auto-applied based on available coupon codes.
 
 ---
 
-### Step 1: Store the Sarvam API Key Securely
-- Save `SARVAM_API_KEY` as a secure backend secret
-- Only accessible from backend functions, never exposed to the browser
+### Step 1: Create a Cart Context (Global State)
 
-### Step 2: Create Speech-to-Text Backend Function
-**New file:** `supabase/functions/sarvam-stt/index.ts`
+**New file:** `src/contexts/CartContext.tsx`
 
-- Accepts base64-encoded audio from the frontend
-- Sends it to Sarvam AI's speech-to-text API (`saaras:v2` model)
-- Returns the transcribed text
-- Auto-detects English and Hindi
+- Create a React Context to manage cart state across the app
+- Cart items include: product ID, name, price, image, quantity, discount info
+- Functions: `addToCart`, `removeFromCart`, `updateQuantity`, `clearCart`, `getTotal`
+- Auto-apply discounts: when an item is added, check the `discounts` table for matching product or category discounts and attach the best one automatically
+- Persist cart to `localStorage` so it survives page refreshes
 
-### Step 3: Create Text-to-Speech Backend Function
-**New file:** `supabase/functions/sarvam-tts/index.ts`
+### Step 2: Create a Cart Drawer Component
 
-- Accepts text and optional language code
-- Sends it to Sarvam AI's text-to-speech API (`bulbul:v2` model)
-- Returns base64-encoded audio for playback
-- Uses appropriate voice for Hindi vs English
+**New file:** `src/components/cart/CartDrawer.tsx`
 
-### Step 4: Add Voice UI to Chat Page
+- Slide-in drawer (using the existing Vaul drawer component) showing all cart items
+- Each item shows: image, name, quantity controls (+/-), original price, discounted price, applied coupon code
+- Summary section at bottom: subtotal, total discount saved, final total
+- "Proceed to Checkout" button that opens the external product link with the coupon code auto-appended
+- Empty cart state with a friendly message
+
+### Step 3: Update ProductCard for In-Chat "Add to Cart"
+
+**Modified file:** `src/components/chat/ProductCard.tsx`
+
+- Replace the "View Product" external link button with an "Add to Cart" button
+- When clicked, adds the product to the cart context with all discount info
+- Show a brief toast/animation confirming the item was added
+- Keep a small "View Details" link to the external page as secondary action
+- If item is already in cart, show "In Cart" indicator instead
+
+### Step 4: Add Cart Icon with Badge to Chat Header
+
 **Modified file:** `src/pages/Chat.tsx`
 
-**Microphone Button (next to send button):**
-- Tap to start recording (uses browser's native MediaRecorder API)
-- Pulsing red animation while recording
-- Tap again to stop -- audio is sent to the STT function
-- Transcribed text auto-sends as a chat message
+- Add a shopping cart icon in the chat header (next to voice toggle)
+- Show a badge with the number of items in cart
+- Clicking opens the Cart Drawer
+- Wrap the Chat page with the CartProvider
 
-**Voice Playback:**
-- After each assistant response, text is sent to TTS function
-- Audio plays automatically using the browser Audio API
-- Small speaker icon shown while audio plays
-- Voice toggle in the header to enable/disable auto-playback
+### Step 5: Update AI System Prompt for Cart Guidance
 
-### Step 5: Register Functions
-- Both `sarvam-stt` and `sarvam-tts` will be registered in the backend config
+**Modified file:** `supabase/functions/chat/index.ts`
+
+- Update the system prompt to tell the AI that users can add products to cart directly in the chat
+- Instruct the AI to suggest adding items to cart, ask about quantities, and mention auto-applied discounts
+- When users ask for discounts, the AI should highlight available coupon codes and confirm they'll be auto-applied at checkout
+- Add instructions for the AI to proactively mention: "I've included the discount -- it'll be auto-applied when you add to cart!"
+
+### Step 6: Update Index Page "Add to Cart" Buttons
+
+**Modified file:** `src/pages/Index.tsx`
+
+- Replace the external link "Add to Cart" buttons with actual cart functionality using the CartContext
+- Add the CartDrawer to the Index page as well
+- Update the ShoppingCart icon in the header to open the drawer and show a badge
+
+### Step 7: Wrap App with CartProvider
+
+**Modified file:** `src/App.tsx`
+
+- Wrap the app with `CartProvider` so cart state is available everywhere
 
 ---
 
 ### User Flow
 
 ```text
-[Tap Mic] --> Record Audio --> [Tap Stop] --> STT --> Transcribed Text --> send() --> AI Response --> TTS --> Play Audio
+User: "Show me electronics under 2000"
+AI: Recommends products with :::product cards (with discount info)
+User: Taps "Add to Cart" on a product card
+     --> Item added to cart, discount auto-applied, toast confirmation
+User: "Do I get any discounts?"
+AI: "Great news! The Wireless Earbuds have 15% off with code SAVE15 -- it's already applied in your cart!"
+User: Taps cart icon in header
+     --> Cart drawer opens showing items, discounts, total
+User: Taps "Checkout"
+     --> Opens external store link with coupon code in URL
 ```
 
 ### Technical Details
 
-**Files to create:**
-- `supabase/functions/sarvam-stt/index.ts` -- Speech-to-Text proxy
-- `supabase/functions/sarvam-tts/index.ts` -- Text-to-Speech proxy
+**New files:**
+- `src/contexts/CartContext.tsx` -- Cart state management + discount auto-apply logic
+- `src/components/cart/CartDrawer.tsx` -- Cart UI drawer component
 
-**Files to modify:**
-- `src/pages/Chat.tsx` -- Add mic button, recording logic, audio playback, voice toggle
-- `supabase/config.toml` -- Register new functions
+**Modified files:**
+- `src/components/chat/ProductCard.tsx` -- "Add to Cart" button instead of external link
+- `src/pages/Chat.tsx` -- Cart icon in header, CartDrawer integration
+- `src/pages/Index.tsx` -- Use CartContext for add-to-cart buttons
+- `src/App.tsx` -- Wrap with CartProvider
+- `supabase/functions/chat/index.ts` -- Update AI system prompt for cart-aware responses
 
-**No new dependencies needed** -- MediaRecorder and Audio are native browser APIs.
+**No new dependencies needed** -- uses existing Vaul drawer and Sonner toast components.
 
-**Sarvam API details:**
-- STT endpoint: `https://api.sarvam.ai/speech-to-text` with `api-subscription-key` header
-- TTS endpoint: `https://api.sarvam.ai/text-to-speech` with `api-subscription-key` header
-- Audio format: MediaRecorder records WebM; Sarvam supports multiple formats including WAV
