@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import ChatMessage from "@/components/chat/ChatMessage";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+const STT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sarvam-stt`;
+const TTS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sarvam-tts`;
 
 function generateSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -19,6 +21,15 @@ const Chat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Voice state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -26,6 +37,40 @@ const Chat: React.FC = () => {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // TTS playback
+  const playTTS = useCallback(async (text: string) => {
+    if (!voiceEnabled || !text.trim()) return;
+    try {
+      // Detect language - simple heuristic
+      const hasHindi = /[\u0900-\u097F]/.test(text);
+      const langCode = hasHindi ? "hi-IN" : "en-IN";
+
+      const resp = await fetch(TTS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ text, target_language_code: langCode }),
+      });
+
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.audio) return;
+
+      const audioSrc = `data:audio/wav;base64,${data.audio}`;
+      const audio = new Audio(audioSrc);
+      audioRef.current = audio;
+      setIsPlaying(true);
+      audio.onended = () => setIsPlaying(false);
+      audio.onerror = () => setIsPlaying(false);
+      await audio.play();
+    } catch (e) {
+      console.error("TTS playback error:", e);
+      setIsPlaying(false);
+    }
+  }, [voiceEnabled]);
 
   const send = useCallback(
     async (text: string) => {
@@ -111,10 +156,84 @@ const Chat: React.FC = () => {
         ]);
       } finally {
         setIsLoading(false);
+        // Play TTS for assistant response
+        if (assistantSoFar) {
+          playTTS(assistantSoFar);
+        }
       }
     },
-    [messages, isLoading, sessionId, conversationId]
+    [messages, isLoading, sessionId, conversationId, playTTS]
   );
+
+  // Recording logic
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        await transcribeAudio(audioBlob);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (e) {
+      console.error("Mic access error:", e);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  }, []);
+
+  const transcribeAudio = async (blob: Blob) => {
+    setIsTranscribing(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve) => {
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]);
+        };
+        reader.readAsDataURL(blob);
+      });
+
+      const resp = await fetch(STT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ audio: base64 }),
+      });
+
+      if (!resp.ok) {
+        console.error("STT failed:", resp.status);
+        setIsTranscribing(false);
+        return;
+      }
+
+      const data = await resp.json();
+      if (data.transcript?.trim()) {
+        send(data.transcript.trim());
+      }
+    } catch (e) {
+      console.error("Transcription error:", e);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -123,12 +242,29 @@ const Chat: React.FC = () => {
     }
   };
 
+  const toggleVoice = () => {
+    setVoiceEnabled((v) => !v);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-[hsl(var(--chat-widget))] text-primary-foreground">
-        <MessageSquareIcon className="h-5 w-5" />
-        <span className="font-semibold text-sm">Shopping Assistant</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-[hsl(var(--chat-widget))] text-primary-foreground">
+        <div className="flex items-center gap-2">
+          <MessageSquareIcon className="h-5 w-5" />
+          <span className="font-semibold text-sm">Shopping Assistant</span>
+        </div>
+        <button
+          onClick={toggleVoice}
+          className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
+          title={voiceEnabled ? "Disable voice" : "Enable voice"}
+        >
+          {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+        </button>
       </div>
 
       {/* Messages */}
@@ -139,7 +275,7 @@ const Chat: React.FC = () => {
               👋 Hi! I'm your shopping assistant.
             </p>
             <p className="text-muted-foreground text-xs">
-              Tell me what you're looking for and I'll help you find the perfect product!
+              Tell me what you're looking for or tap the mic to speak!
             </p>
             <div className="flex flex-wrap gap-2 mt-4 justify-center">
               {["Show me electronics", "I need a gift under ₹1000", "मुझे फोन चाहिए"].map((s) => (
@@ -164,11 +300,25 @@ const Chat: React.FC = () => {
             </div>
           </div>
         )}
+        {isPlaying && (
+          <div className="flex justify-start mb-3">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Volume2 className="h-3 w-3 animate-pulse" />
+              <span>Speaking...</span>
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
       <div className="border-t border-border px-3 py-3 mb-16">
+        {isTranscribing && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2 px-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Transcribing...</span>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
@@ -179,6 +329,20 @@ const Chat: React.FC = () => {
             rows={1}
             className="flex-1 resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring max-h-24"
           />
+          {/* Mic button */}
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isTranscribing || isLoading}
+            className={`h-9 w-9 rounded-full flex items-center justify-center transition-all shrink-0 disabled:opacity-50 ${
+              isRecording
+                ? "bg-destructive text-destructive-foreground animate-pulse"
+                : "bg-muted text-muted-foreground hover:bg-accent"
+            }`}
+            title={isRecording ? "Stop recording" : "Tap to speak"}
+          >
+            {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </button>
+          {/* Send button */}
           <button
             onClick={() => send(input)}
             disabled={!input.trim() || isLoading}
