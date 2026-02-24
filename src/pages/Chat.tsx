@@ -1,5 +1,5 @@
-import React, { useState, useRef, useCallback } from "react";
-import { Loader2, ShoppingCart, Volume2, VolumeX, Sparkles } from "lucide-react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { Loader2, ShoppingCart, Volume2, VolumeX } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import CartDrawer from "@/components/cart/CartDrawer";
 import VoiceButton from "@/components/assistant/VoiceButton";
@@ -19,7 +19,6 @@ function generateSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Strip markdown/special chars for clean TTS */
 function cleanForTTS(text: string): string {
   return text
     .replace(/:::product[\s\S]*?:::/g, "")
@@ -31,7 +30,6 @@ function cleanForTTS(text: string): string {
     .trim();
 }
 
-/** Parse :::product blocks from AI response */
 function parseProducts(text: string): { products: AssistantProduct[]; commentary: string } {
   const products: AssistantProduct[] = [];
   const productRegex = /:::product\s*\n([\s\S]*?):::/g;
@@ -65,7 +63,6 @@ function parseProducts(text: string): { products: AssistantProduct[]; commentary
   return { products, commentary };
 }
 
-/** Parse :::action blocks */
 function parseActions(text: string): Array<{ action: string; productName: string }> {
   const actions: Array<{ action: string; productName: string }> = [];
   const actionRegex = /:::action\s*\n([\s\S]*?):::/g;
@@ -91,20 +88,17 @@ const Chat: React.FC = () => {
   const [cartOpen, setCartOpen] = useState(false);
   const { totalItems, addToCart, isInCart } = useCart();
 
-  // Results history
   const [resultGroups, setResultGroups] = useState<ResultGroup[]>([]);
   const [lastQuery, setLastQuery] = useState("");
-  const [transcribedText, setTranscribedText] = useState("");
-
-  // PDP
   const [selectedProduct, setSelectedProduct] = useState<AssistantProduct | null>(null);
 
-  // Voice
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [continuousListening, setContinuousListening] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const shouldRestartRef = useRef(false);
 
   // TTS
   const playTTS = useCallback(async (text: string) => {
@@ -127,7 +121,7 @@ const Chat: React.FC = () => {
     } catch (e) { console.error("TTS error:", e); }
   }, [voiceEnabled]);
 
-  // Handle AI actions (open PDP, add to cart)
+  // Handle AI actions
   const handleActions = useCallback((actions: Array<{ action: string; productName: string }>, products: AssistantProduct[]) => {
     for (const act of actions) {
       if (act.action === "open_product") {
@@ -136,17 +130,14 @@ const Chat: React.FC = () => {
           setTimeout(() => setSelectedProduct(product), 500);
         }
       } else if (act.action === "add_to_cart") {
-        // Find from all result groups
         let targetProduct: AssistantProduct | undefined;
         for (const group of resultGroups) {
           targetProduct = group.products.find(p => p.name.toLowerCase().includes(act.productName.toLowerCase()));
           if (targetProduct) break;
         }
-        // Also check current products
         if (!targetProduct) {
           targetProduct = products.find(p => p.name.toLowerCase().includes(act.productName.toLowerCase()));
         }
-        // Also check selectedProduct
         if (!targetProduct && selectedProduct && selectedProduct.name.toLowerCase().includes(act.productName.toLowerCase())) {
           targetProduct = selectedProduct;
         }
@@ -213,7 +204,6 @@ const Chat: React.FC = () => {
         }
       }
 
-      // Parse products, actions and APPEND to result groups
       const { products: parsed, commentary } = parseProducts(assistantSoFar);
       const actions = parseActions(assistantSoFar);
       const newGroup: ResultGroup = { query: text.trim(), commentary, products: parsed };
@@ -222,20 +212,27 @@ const Chat: React.FC = () => {
       setMessages((prev) => [...prev, { role: "assistant", content: assistantSoFar }]);
       setState("results");
 
-      // Handle actions
       if (actions.length > 0) handleActions(actions, parsed);
-
       if (commentary) playTTS(commentary);
+
+      // Auto-restart listening if continuous mode is on
+      if (shouldRestartRef.current) {
+        setTimeout(() => {
+          startRecordingInternal();
+        }, 500);
+      }
     } catch (e) {
       console.error("Chat error:", e);
       setState(resultGroups.length > 0 ? "results" : "idle");
+      if (shouldRestartRef.current) {
+        setTimeout(() => startRecordingInternal(), 500);
+      }
     }
   }, [messages, sessionId, conversationId, playTTS, resultGroups.length, handleActions]);
 
-  // VAD stop ref to break circular dependency
+  // VAD stop ref
   const vadStopRef = useRef<() => void>(() => {});
 
-  // Stop recording handler
   const doStopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
@@ -243,14 +240,12 @@ const Chat: React.FC = () => {
     vadStopRef.current();
   }, []);
 
-  // VAD: auto-stop after silence
   const vad = useVAD(doStopRecording, 2000, 0.01);
   vadStopRef.current = vad.stop;
 
-  // Recording
-  const startRecording = useCallback(async () => {
+  // Internal start recording (doesn't set continuous mode)
+  const startRecordingInternal = useCallback(async () => {
     try {
-      // Stop any playing audio
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -264,6 +259,16 @@ const Chat: React.FC = () => {
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        
+        // Check if there's actual audio content
+        if (audioBlob.size < 1000) {
+          // Too small, probably silence - restart if continuous
+          if (shouldRestartRef.current) {
+            setTimeout(() => startRecordingInternal(), 300);
+          }
+          return;
+        }
+        
         setState("transcribing");
         try {
           const reader = new FileReader();
@@ -278,19 +283,44 @@ const Chat: React.FC = () => {
           });
           if (resp.ok) {
             const data = await resp.json();
-            if (data.transcript?.trim()) { setTranscribedText(data.transcript.trim()); send(data.transcript.trim()); return; }
+            if (data.transcript?.trim()) {
+              send(data.transcript.trim());
+              return;
+            }
           }
+          // No transcript - restart if continuous
           setState(resultGroups.length > 0 ? "results" : "idle");
-        } catch { setState(resultGroups.length > 0 ? "results" : "idle"); }
+          if (shouldRestartRef.current) {
+            setTimeout(() => startRecordingInternal(), 300);
+          }
+        } catch {
+          setState(resultGroups.length > 0 ? "results" : "idle");
+          if (shouldRestartRef.current) {
+            setTimeout(() => startRecordingInternal(), 300);
+          }
+        }
       };
 
       mediaRecorder.start();
       setState("listening");
-
-      // Start VAD monitoring
       vad.start(stream);
     } catch (e) { console.error("Mic access error:", e); }
   }, [send, resultGroups.length, vad]);
+
+  // Public start - enables continuous mode
+  const startRecording = useCallback(() => {
+    shouldRestartRef.current = true;
+    setContinuousListening(true);
+    startRecordingInternal();
+  }, [startRecordingInternal]);
+
+  // Full stop - disables continuous mode
+  const stopEverything = useCallback(() => {
+    shouldRestartRef.current = false;
+    setContinuousListening(false);
+    doStopRecording();
+    setState(resultGroups.length > 0 ? "results" : "idle");
+  }, [doStopRecording, resultGroups.length]);
 
   const toggleVoice = () => {
     setVoiceEnabled((v) => !v);
@@ -298,87 +328,79 @@ const Chat: React.FC = () => {
   };
 
   const showHero = state === "idle" && resultGroups.length === 0;
+  const hasResults = resultGroups.length > 0;
+  const isProcessing = state === "transcribing" || state === "searching";
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-primary text-primary-foreground">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5" />
-          <span className="font-semibold text-sm">AI Assistant</span>
-        </div>
+      {/* Minimal header - icons only */}
+      <div className="flex items-center justify-end px-4 py-2 bg-background">
         <div className="flex items-center gap-1">
-          <button onClick={toggleVoice} className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors">
-            {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          <button onClick={toggleVoice} className="h-8 w-8 rounded-full hover:bg-secondary flex items-center justify-center transition-colors">
+            {voiceEnabled ? <Volume2 className="h-4 w-4 text-muted-foreground" /> : <VolumeX className="h-4 w-4 text-muted-foreground" />}
           </button>
-          <button onClick={() => setCartOpen(true)} className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors relative">
-            <ShoppingCart className="h-4 w-4" />
+          <button onClick={() => setCartOpen(true)} className="h-8 w-8 rounded-full hover:bg-secondary flex items-center justify-center transition-colors relative">
+            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
             {totalItems > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">{totalItems}</span>
+              <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">{totalItems}</span>
             )}
           </button>
         </div>
       </div>
       <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
 
-      {/* HERO: idle with no results - voice only */}
-      {showHero && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
+      {/* HERO: idle with no results, not listening */}
+      {showHero && !continuousListening && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6">
           <VoiceButton isListening={false} onToggle={startRecording} />
         </div>
       )}
 
-      {/* LISTENING */}
-      {state === "listening" && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
-          <VoiceButton isListening={true} onToggle={doStopRecording} />
-        </div>
-      )}
-
-      {/* TRANSCRIBING */}
-      {state === "transcribing" && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
-          <div className="bg-secondary rounded-xl px-5 py-3 max-w-xs text-center">
-            {transcribedText ? (
-              <p className="text-sm text-foreground font-medium">"{transcribedText}"</p>
-            ) : (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Transcribing your voice...</div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* SEARCHING */}
-      {state === "searching" && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
-          {lastQuery && (
-            <div className="bg-secondary rounded-xl px-5 py-3 max-w-xs text-center">
-              <p className="text-sm text-foreground font-medium">"{lastQuery}"</p>
+      {/* Active listening/processing with no results yet */}
+      {!hasResults && continuousListening && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6">
+          <VoiceButton isListening={state === "listening"} onToggle={stopEverything} />
+          {isProcessing && (
+            <div className="mt-4 flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-xs">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
             </div>
           )}
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Finding the best products for you...</p>
-          </div>
         </div>
       )}
 
-      {/* RESULTS: product grid + voice button */}
-      {state === "results" && (
+      {/* Results view */}
+      {hasResults && (
         <>
           <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
-          <div className="border-t border-border px-3 py-3 bg-background mb-16 flex justify-center">
-            <VoiceButton isListening={false} onToggle={startRecording} size="small" />
-          </div>
-        </>
-      )}
-
-      {/* Idle with previous results: show results + voice button */}
-      {state === "idle" && resultGroups.length > 0 && (
-        <>
-          <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
-          <div className="border-t border-border px-3 py-3 bg-background mb-16 flex justify-center">
-            <VoiceButton isListening={false} onToggle={startRecording} size="small" />
+          
+          {/* Compact bottom bar with mic */}
+          <div className="border-t border-border bg-background mb-16 px-4 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {isProcessing && (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
+                </>
+              )}
+              {state === "listening" && (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">Listening...</span>
+                </>
+              )}
+              {!isProcessing && !continuousListening && (
+                <span className="text-xs text-muted-foreground">Tap mic to continue</span>
+              )}
+            </div>
+            <VoiceButton
+              isListening={continuousListening}
+              onToggle={continuousListening ? stopEverything : startRecording}
+              size="small"
+            />
           </div>
         </>
       )}
