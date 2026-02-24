@@ -8,15 +8,26 @@ interface ChatMessageProps {
 }
 
 function parseProductCards(content: string) {
-  const parts: Array<{ type: "text"; value: string } | { type: "product"; props: Record<string, string> }> = [];
+  const parts: Array<{ type: "text"; value: string } | { type: "products"; items: Record<string, string>[] }> = [];
   const regex = /:::product\n([\s\S]*?):::/g;
   let lastIndex = 0;
   let match;
+  let pendingProducts: Record<string, string>[] = [];
+
+  const flushProducts = () => {
+    if (pendingProducts.length > 0) {
+      parts.push({ type: "products", items: [...pendingProducts] });
+      pendingProducts = [];
+    }
+  };
 
   while ((match = regex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: "text", value: content.slice(lastIndex, match.index) });
+    const textBefore = content.slice(lastIndex, match.index).trim();
+    if (textBefore) {
+      flushProducts();
+      parts.push({ type: "text", value: textBefore });
     }
+
     const props: Record<string, string> = {};
     match[1].split("\n").forEach((line) => {
       const colonIdx = line.indexOf(":");
@@ -26,12 +37,15 @@ function parseProductCards(content: string) {
         if (key && val) props[key] = val;
       }
     });
-    parts.push({ type: "product", props });
+    pendingProducts.push(props);
     lastIndex = regex.lastIndex;
   }
 
+  flushProducts();
+
   if (lastIndex < content.length) {
-    parts.push({ type: "text", value: content.slice(lastIndex) });
+    const remaining = content.slice(lastIndex).trim();
+    if (remaining) parts.push({ type: "text", value: remaining });
   }
 
   return parts;
@@ -44,27 +58,32 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ role, content }) => {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
       <div
-        className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+        className={`max-w-[92%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
           isUser
             ? "bg-[hsl(var(--chat-user))] text-[hsl(var(--chat-user-foreground))] rounded-br-md"
             : "bg-[hsl(var(--chat-assistant))] text-[hsl(var(--chat-assistant-foreground))] rounded-bl-md"
         }`}
       >
         {parts.map((part, i) =>
-          part.type === "product" ? (
-            <ProductCard
-              key={i}
-              name={part.props.name || "Product"}
-              price={part.props.price || ""}
-              discountPrice={part.props.discount_price}
-              discountCode={part.props.discount_code}
-              image={part.props.image}
-              link={part.props.link || "#"}
-              rating={part.props.rating}
-            />
+          part.type === "products" ? (
+            <div key={i} className="grid grid-cols-2 gap-2 my-2">
+              {(part as any).items.map((p: Record<string, string>, j: number) => (
+                <ProductCard
+                  key={j}
+                  name={p.name || "Product"}
+                  price={p.price || ""}
+                  discountPrice={p.discount_price}
+                  discountCode={p.discount_code}
+                  image={p.image}
+                  link={p.link || "#"}
+                  rating={p.rating}
+                  description={p.description}
+                />
+              ))}
+            </div>
           ) : (
             <div key={i} className="prose prose-sm max-w-none dark:prose-invert [&>p]:mb-1 [&>p:last-child]:mb-0">
-              <ReactMarkdown>{part.value.trim()}</ReactMarkdown>
+              <ReactMarkdown>{(part as any).value}</ReactMarkdown>
             </div>
           )
         )}
