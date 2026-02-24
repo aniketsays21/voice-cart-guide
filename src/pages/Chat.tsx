@@ -3,8 +3,9 @@ import { Loader2, ShoppingCart, Volume2, VolumeX, Sparkles } from "lucide-react"
 import { useCart } from "@/contexts/CartContext";
 import CartDrawer from "@/components/cart/CartDrawer";
 import VoiceButton from "@/components/assistant/VoiceButton";
-import ProductResults, { type AssistantProduct } from "@/components/assistant/ProductResults";
+import ProductResults, { type AssistantProduct, type ResultGroup } from "@/components/assistant/ProductResults";
 import AssistantInput from "@/components/assistant/AssistantInput";
+import ProductDetailSheet from "@/components/assistant/ProductDetailSheet";
 
 type AssistantState = "idle" | "listening" | "transcribing" | "searching" | "results";
 type Msg = { role: "user" | "assistant"; content: string };
@@ -36,8 +37,7 @@ function parseProducts(text: string): { products: AssistantProduct[]; commentary
     const link = get("link");
     if (name && price && link) {
       products.push({
-        name,
-        price,
+        name, price,
         discountPrice: get("discount_price"),
         discountCode: get("discount_code"),
         image: get("image"),
@@ -60,11 +60,13 @@ const Chat: React.FC = () => {
   const [cartOpen, setCartOpen] = useState(false);
   const { totalItems } = useCart();
 
-  // Results
-  const [products, setProducts] = useState<AssistantProduct[]>([]);
-  const [aiCommentary, setAiCommentary] = useState("");
+  // Results history
+  const [resultGroups, setResultGroups] = useState<ResultGroup[]>([]);
   const [lastQuery, setLastQuery] = useState("");
   const [transcribedText, setTranscribedText] = useState("");
+
+  // PDP
+  const [selectedProduct, setSelectedProduct] = useState<AssistantProduct | null>(null);
 
   // Voice
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -79,10 +81,7 @@ const Chat: React.FC = () => {
       const hasHindi = /[\u0900-\u097F]/.test(text);
       const resp = await fetch(TTS_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
         body: JSON.stringify({ text, target_language_code: hasHindi ? "hi-IN" : "en-IN" }),
       });
       if (!resp.ok) return;
@@ -91,9 +90,7 @@ const Chat: React.FC = () => {
       const audio = new Audio(`data:audio/wav;base64,${data.audio}`);
       audioRef.current = audio;
       await audio.play();
-    } catch (e) {
-      console.error("TTS error:", e);
-    }
+    } catch (e) { console.error("TTS error:", e); }
   }, [voiceEnabled]);
 
   // Send query to AI
@@ -111,24 +108,17 @@ const Chat: React.FC = () => {
     try {
       const resp = await fetch(CHAT_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
         body: JSON.stringify({
           messages: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
-          sessionId,
-          conversationId,
+          sessionId, conversationId,
         }),
       });
 
       const convIdHeader = resp.headers.get("X-Conversation-Id");
       if (convIdHeader && !conversationId) setConversationId(convIdHeader);
 
-      if (!resp.ok) {
-        setState("idle");
-        return;
-      }
+      if (!resp.ok) { setState(resultGroups.length > 0 ? "results" : "idle"); return; }
 
       const reader = resp.body!.getReader();
       const decoder = new TextDecoder();
@@ -138,7 +128,6 @@ const Chat: React.FC = () => {
         const { done, value } = await reader.read();
         if (done) break;
         textBuffer += decoder.decode(value, { stream: true });
-
         let newlineIndex: number;
         while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
           let line = textBuffer.slice(0, newlineIndex);
@@ -151,27 +140,24 @@ const Chat: React.FC = () => {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) assistantSoFar += content;
-          } catch {
-            textBuffer = line + "\n" + textBuffer;
-            break;
-          }
+          } catch { textBuffer = line + "\n" + textBuffer; break; }
         }
       }
 
-      // Parse products from response
+      // Parse products and APPEND to result groups
       const { products: parsed, commentary } = parseProducts(assistantSoFar);
-      setProducts(parsed);
-      setAiCommentary(commentary);
+      const newGroup: ResultGroup = { query: text.trim(), commentary, products: parsed };
+
+      setResultGroups((prev) => [newGroup, ...prev]);
       setMessages((prev) => [...prev, { role: "assistant", content: assistantSoFar }]);
       setState("results");
 
-      // TTS for commentary only
       if (commentary) playTTS(commentary);
     } catch (e) {
       console.error("Chat error:", e);
-      setState("idle");
+      setState(resultGroups.length > 0 ? "results" : "idle");
     }
-  }, [messages, sessionId, conversationId, playTTS]);
+  }, [messages, sessionId, conversationId, playTTS, resultGroups.length]);
 
   // Recording
   const startRecording = useCallback(async () => {
@@ -180,11 +166,7 @@ const Chat: React.FC = () => {
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
@@ -195,49 +177,35 @@ const Chat: React.FC = () => {
             reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
             reader.readAsDataURL(audioBlob);
           });
-
           const resp = await fetch(STT_URL, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
             body: JSON.stringify({ audio: base64 }),
           });
-
           if (resp.ok) {
             const data = await resp.json();
-            if (data.transcript?.trim()) {
-              setTranscribedText(data.transcript.trim());
-              send(data.transcript.trim());
-              return;
-            }
+            if (data.transcript?.trim()) { setTranscribedText(data.transcript.trim()); send(data.transcript.trim()); return; }
           }
-          setState("idle");
-        } catch {
-          setState("idle");
-        }
+          setState(resultGroups.length > 0 ? "results" : "idle");
+        } catch { setState(resultGroups.length > 0 ? "results" : "idle"); }
       };
-
       mediaRecorder.start();
       setState("listening");
-    } catch (e) {
-      console.error("Mic access error:", e);
-    }
-  }, [send]);
+    } catch (e) { console.error("Mic access error:", e); }
+  }, [send, resultGroups.length]);
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") mediaRecorderRef.current.stop();
   }, []);
 
   const toggleVoice = () => {
     setVoiceEnabled((v) => !v);
-    if (audioRef.current) { audioRef.current.pause(); }
+    if (audioRef.current) audioRef.current.pause();
   };
 
   const suggestions = ["Show me electronics under ₹2000", "Best deals today", "मुझे फोन चाहिए"];
+
+  const showHero = state === "idle" && resultGroups.length === 0;
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -248,76 +216,56 @@ const Chat: React.FC = () => {
           <span className="font-semibold text-sm">AI Assistant</span>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={toggleVoice}
-            className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
-          >
+          <button onClick={toggleVoice} className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors">
             {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </button>
-          <button
-            onClick={() => setCartOpen(true)}
-            className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors relative"
-          >
+          <button onClick={() => setCartOpen(true)} className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors relative">
             <ShoppingCart className="h-4 w-4" />
             {totalItems > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">
-                {totalItems}
-              </span>
+              <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">{totalItems}</span>
             )}
           </button>
         </div>
       </div>
       <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
 
-      {/* IDLE STATE: Hero with mic button */}
-      {state === "idle" && (
+      {/* HERO: idle with no results */}
+      {showHero && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
           <div className="text-center">
             <h2 className="text-2xl font-bold text-foreground mb-2">Your AI Shopping Assistant</h2>
             <p className="text-sm text-muted-foreground">Tap to speak or type what you're looking for</p>
           </div>
-
           <VoiceButton isListening={false} onToggle={startRecording} />
-
-          {/* Suggestion chips */}
           <div className="flex flex-wrap gap-2 justify-center mt-2">
             {suggestions.map((s) => (
-              <button
-                key={s}
-                onClick={() => send(s)}
-                className="text-xs bg-secondary text-foreground border border-border rounded-full px-4 py-2 hover:bg-accent transition-colors"
-              >
-                {s}
-              </button>
+              <button key={s} onClick={() => send(s)} className="text-xs bg-secondary text-foreground border border-border rounded-full px-4 py-2 hover:bg-accent transition-colors">{s}</button>
             ))}
           </div>
         </div>
       )}
 
-      {/* LISTENING STATE */}
+      {/* LISTENING */}
       {state === "listening" && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
           <VoiceButton isListening={true} onToggle={stopRecording} />
         </div>
       )}
 
-      {/* TRANSCRIBING STATE */}
+      {/* TRANSCRIBING */}
       {state === "transcribing" && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
           <div className="bg-secondary rounded-xl px-5 py-3 max-w-xs text-center">
             {transcribedText ? (
               <p className="text-sm text-foreground font-medium">"{transcribedText}"</p>
             ) : (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Transcribing your voice...
-              </div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Transcribing your voice...</div>
             )}
           </div>
         </div>
       )}
 
-      {/* SEARCHING STATE */}
+      {/* SEARCHING */}
       {state === "searching" && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
           {lastQuery && (
@@ -332,10 +280,10 @@ const Chat: React.FC = () => {
         </div>
       )}
 
-      {/* RESULTS STATE: 90% products + 10% input */}
+      {/* RESULTS: product grid + input bar */}
       {state === "results" && (
         <>
-          <ProductResults products={products} query={lastQuery} aiMessage={aiCommentary} />
+          <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
           <AssistantInput
             onSend={send}
             onStartRecording={startRecording}
@@ -347,8 +295,23 @@ const Chat: React.FC = () => {
         </>
       )}
 
-      {/* Bottom fallback text input for idle state */}
-      {state === "idle" && (
+      {/* Idle with previous results: show results + input */}
+      {state === "idle" && resultGroups.length > 0 && (
+        <>
+          <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
+          <AssistantInput
+            onSend={send}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            isRecording={false}
+            isTranscribing={false}
+            isLoading={false}
+          />
+        </>
+      )}
+
+      {/* Bottom input for hero idle */}
+      {showHero && (
         <AssistantInput
           onSend={send}
           onStartRecording={startRecording}
@@ -358,6 +321,15 @@ const Chat: React.FC = () => {
           isLoading={false}
         />
       )}
+
+      {/* PDP Sheet */}
+      <ProductDetailSheet
+        product={selectedProduct}
+        open={!!selectedProduct}
+        onClose={() => setSelectedProduct(null)}
+        sessionId={sessionId}
+        conversationId={conversationId}
+      />
     </div>
   );
 };

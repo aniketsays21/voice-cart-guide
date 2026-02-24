@@ -8,10 +8,11 @@ interface AssistantInputProps {
   isRecording: boolean;
   isTranscribing: boolean;
   isLoading: boolean;
+  placeholder?: string;
 }
 
 const AssistantInput: React.FC<AssistantInputProps> = ({
-  onSend, onStartRecording, onStopRecording, isRecording, isTranscribing, isLoading,
+  onSend, onStartRecording, onStopRecording, isRecording, isTranscribing, isLoading, placeholder = "Ask a follow-up...",
 }) => {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,7 +44,7 @@ const AssistantInput: React.FC<AssistantInputProps> = ({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask a follow-up..."
+          placeholder={placeholder}
           className="flex-1 rounded-full border border-input bg-secondary px-4 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
         <button
