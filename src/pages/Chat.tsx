@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, VolumeX, ShoppingCart } from "lucide-react";
+import { useCart } from "@/contexts/CartContext";
+import CartDrawer from "@/components/cart/CartDrawer";
 import ChatMessage from "@/components/chat/ChatMessage";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -17,6 +19,8 @@ const Chat: React.FC = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
+  const { totalItems } = useCart();
   const [sessionId] = useState(generateSessionId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -258,14 +262,29 @@ const Chat: React.FC = () => {
           <MessageSquareIcon className="h-5 w-5" />
           <span className="font-semibold text-sm">Shopping Assistant</span>
         </div>
-        <button
-          onClick={toggleVoice}
-          className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
-          title={voiceEnabled ? "Disable voice" : "Enable voice"}
-        >
-          {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={toggleVoice}
+            className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
+            title={voiceEnabled ? "Disable voice" : "Enable voice"}
+          >
+            {voiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={() => setCartOpen(true)}
+            className="h-7 w-7 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors relative"
+            title="Cart"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {totalItems > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">
+                {totalItems}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
+      <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3">

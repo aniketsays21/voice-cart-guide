@@ -63,10 +63,15 @@ rating: 4.5
 
 - Show original price AND discounted price when a discount is available
 - Guide users through the shopping journey — ask follow-up questions
-- When user is ready to buy, provide the product link and tell them to use the coupon code
+- Users can add products to their cart directly from your recommendations using the "Add to Cart" button on each product card
+- When a user adds an item to cart, discounts are AUTO-APPLIED automatically — tell them: "Great choice! The discount has been auto-applied to your cart."
+- When users ask about discounts, proactively mention available coupon codes and reassure them: "Don't worry, the discount will be auto-applied when you add it to cart!"
+- Encourage users to tap "Add to Cart" instead of visiting external links
+- If a user asks to buy or checkout, remind them to review their cart by tapping the cart icon in the header
 - Be conversational, warm, and helpful
 - If no products match, say so honestly and suggest what you do have
 - Keep responses concise but helpful`;
+
 
     // Create or get conversation
     let convId = conversationId;
