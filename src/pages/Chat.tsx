@@ -3,6 +3,7 @@ import { Loader2, ShoppingCart, Volume2, VolumeX } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import CartDrawer from "@/components/cart/CartDrawer";
 import VoiceButton from "@/components/assistant/VoiceButton";
+import AudioWaveform from "@/components/assistant/AudioWaveform";
 import ProductResults, { type AssistantProduct, type ResultGroup } from "@/components/assistant/ProductResults";
 import ProductDetailSheet from "@/components/assistant/ProductDetailSheet";
 import { useVAD } from "@/hooks/useVAD";
@@ -98,6 +99,7 @@ const Chat: React.FC = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const shouldRestartRef = useRef(false);
 
   // TTS
@@ -240,7 +242,7 @@ const Chat: React.FC = () => {
     vadStopRef.current();
   }, []);
 
-  const vad = useVAD(doStopRecording, 2000, 0.01);
+  const vad = useVAD(doStopRecording, 2500, 0.015);
   vadStopRef.current = vad.stop;
 
   // Internal start recording (doesn't set continuous mode)
@@ -250,6 +252,7 @@ const Chat: React.FC = () => {
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      setActiveStream(stream);
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -258,6 +261,7 @@ const Chat: React.FC = () => {
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
+        setActiveStream(null);
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         
         // Check if there's actual audio content
@@ -358,10 +362,11 @@ const Chat: React.FC = () => {
 
       {/* Active listening/processing with no results yet */}
       {!hasResults && continuousListening && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
           <VoiceButton isListening={state === "listening"} onToggle={stopEverything} />
+          <AudioWaveform stream={activeStream} isActive={state === "listening"} barCount={32} className="max-w-[240px] mx-auto" />
           {isProcessing && (
-            <div className="mt-4 flex items-center gap-2 text-muted-foreground">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               <span className="text-xs">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
             </div>
@@ -374,33 +379,27 @@ const Chat: React.FC = () => {
         <>
           <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
           
-          {/* Compact bottom bar with mic */}
-          <div className="border-t border-border bg-background mb-16 px-4 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {isProcessing && (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                  <span className="text-xs text-muted-foreground">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
-                </>
-              )}
-              {state === "listening" && (
-                <>
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
-                  </span>
-                  <span className="text-xs text-muted-foreground">Listening...</span>
-                </>
-              )}
-              {!isProcessing && !continuousListening && (
-                <span className="text-xs text-muted-foreground">Tap mic to continue</span>
-              )}
-            </div>
+          {/* Compact bottom bar with mic + waveform */}
+          <div className="border-t border-border bg-background mb-16 px-4 py-2 flex items-center gap-3">
             <VoiceButton
               isListening={continuousListening}
               onToggle={continuousListening ? stopEverything : startRecording}
               size="small"
             />
+            <div className="flex-1 min-w-0">
+              {state === "listening" && activeStream ? (
+                <AudioWaveform stream={activeStream} isActive={true} barCount={20} className="h-[32px]" />
+              ) : isProcessing ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
+                </div>
+              ) : !continuousListening ? (
+                <span className="text-xs text-muted-foreground">Tap mic to continue</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">Listening...</span>
+              )}
+            </div>
           </div>
         </>
       )}
