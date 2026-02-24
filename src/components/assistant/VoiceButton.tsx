@@ -63,7 +63,7 @@ const VoiceButton: React.FC<VoiceButtonProps> = ({ isListening, onToggle, disabl
       {/* Label */}
       {isLarge && (
         <p className="text-sm font-medium text-muted-foreground">
-          {isListening ? "Listening... Tap to stop" : "Tap to Speak"}
+          {isListening ? "Listening... I'll stop when you pause" : "Tap to Speak"}
         </p>
       )}
 
