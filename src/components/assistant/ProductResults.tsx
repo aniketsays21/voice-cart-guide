@@ -25,7 +25,7 @@ interface ProductResultsProps {
   onProductClick?: (product: AssistantProduct) => void;
 }
 
-const ProductResults: React.FC<ProductResultsProps> = ({ resultGroups, onProductClick }) => {
+const ProductResults: React.FC<ProductResultsProps> = ({ resultGroups = [], onProductClick }) => {
   const { addToCart, isInCart } = useCart();
 
   const handleAdd = async (e: React.MouseEvent, p: AssistantProduct) => {
