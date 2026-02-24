@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Search, ShoppingCart, Menu, Star, ChevronLeft, ChevronRight, Grid2X2, TrendingUp, Percent, Check } from "lucide-react";
+import { Search, ShoppingCart, Menu, Star, ChevronLeft, ChevronRight, Grid2X2, Sparkles, Droplets, Gift, Palette, Wind, Check } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import CartDrawer from "@/components/cart/CartDrawer";
 import { toast } from "sonner";
@@ -24,7 +24,7 @@ type Discount = {
   applicable_category: string | null;
 };
 
-const FILTERS = ["All", "Electronics", "Fashion", "Home"] as const;
+const FILTERS = ["All", "Perfume", "Skincare", "Gift Set", "Cosmetics", "Shower Gel", "Attar"] as const;
 
 const Index = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -87,9 +87,12 @@ const Index = () => {
             const isActive = activeFilter === f;
             const icons: Record<string, React.ReactNode> = {
               All: <Grid2X2 className="h-3.5 w-3.5" />,
-              Electronics: <TrendingUp className="h-3.5 w-3.5" />,
-              Fashion: <Percent className="h-3.5 w-3.5" />,
-              Home: <Star className="h-3.5 w-3.5" />,
+              Perfume: <Sparkles className="h-3.5 w-3.5" />,
+              Skincare: <Droplets className="h-3.5 w-3.5" />,
+              "Gift Set": <Gift className="h-3.5 w-3.5" />,
+              Cosmetics: <Palette className="h-3.5 w-3.5" />,
+              "Shower Gel": <Wind className="h-3.5 w-3.5" />,
+              Attar: <Star className="h-3.5 w-3.5" />,
             };
             return (
               <button
