@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { audio, language_code, sessionId } = body;
+    const { audio, language_code, sessionId, audioMimeType } = body;
 
     // Input validation
     if (!audio || typeof audio !== "string") {
@@ -78,7 +78,9 @@ Deno.serve(async (req) => {
 
     // Build multipart form data
     const formData = new FormData();
-    formData.append("file", new Blob([binaryAudio], { type: "audio/webm" }), "recording.webm");
+    const mimeType = audioMimeType || "audio/webm";
+    const ext = mimeType.includes("mp4") ? ".mp4" : mimeType.includes("ogg") ? ".ogg" : ".webm";
+    formData.append("file", new Blob([binaryAudio], { type: mimeType }), "recording" + ext);
     formData.append("model", "saaras:v3");
     formData.append("mode", "transcribe");
     if (language_code) {
