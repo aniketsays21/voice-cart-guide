@@ -1,206 +1,87 @@
 /**
- * AI Chat Widget — Voice-First Shopping Assistant (IIFE)
- * Drop this script on any website (Shopify, WordPress, etc.)
- * Voice-only mode with auto-welcome, rich product cards, and result groups.
- *
- * Configuration via window.AIChatConfig or data-* attributes on the script tag.
+ * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
+ * v2.0 — Avatar-first flow, live catalog from Shopify, native product navigation
  */
 (function () {
   "use strict";
 
-  // ── Icons (inline SVG) ──────────────────────────────────────────────
+  // ── Icons ──────────────────────────────────────────────────────────
   var ICONS = {
     chat: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
     close: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     send: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
-    link: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
     mic: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
     micOff: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
-    stop: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
     voice: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>',
-    star: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="12" height="12"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
-    cart: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>'
+    link: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
   };
 
-  // ── Styles ───────────────────────────────────────────────────────────
+  // ── Styles ──────────────────────────────────────────────────────────
   function getWidgetStyles(primaryColor) {
     return "\
     .aicw-root {\
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\
-      font-size: 14px;\
-      line-height: 1.5;\
-      color: #1a1a2e;\
-      box-sizing: border-box;\
-    }\
-    .aicw-root *, .aicw-root *::before, .aicw-root *::after {\
-      box-sizing: border-box;\
-    }\
-    .aicw-panel {\
+      font-size: 14px; line-height: 1.5; color: #1a1a2e; box-sizing: border-box;\
       width: 100%; height: 100%;\
-      border-radius: 0;\
-      border: none;\
-      background: #fff;\
-      display: flex; flex-direction: column;\
-      overflow: hidden;\
+    }\
+    .aicw-root *, .aicw-root *::before, .aicw-root *::after { box-sizing: border-box; }\
+    .aicw-panel {\
+      width: 100%; height: 100%; border-radius: 0; border: none;\
+      background: #fff; display: flex; flex-direction: column; overflow: hidden;\
     }\
     .aicw-header {\
       display: flex; align-items: center; justify-content: space-between;\
-      padding: 12px 16px;\
-      background: " + primaryColor + ";\
-      color: #fff;\
-      flex-shrink: 0;\
+      padding: 12px 16px; background: " + primaryColor + "; color: #fff; flex-shrink: 0;\
     }\
-    .aicw-header-title {\
-      display: flex; align-items: center; gap: 8px;\
-      font-weight: 600; font-size: 14px;\
-    }\
+    .aicw-header-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }\
     .aicw-header-title svg { width: 20px; height: 20px; }\
     .aicw-close {\
-      width: 28px; height: 28px;\
-      border-radius: 50%; border: none;\
-      background: rgba(255,255,255,0.15);\
-      color: #fff; cursor: pointer;\
-      display: flex; align-items: center; justify-content: center;\
-      transition: background 0.2s;\
+      width: 28px; height: 28px; border-radius: 50%; border: none;\
+      background: rgba(255,255,255,0.15); color: #fff; cursor: pointer;\
+      display: flex; align-items: center; justify-content: center; transition: background 0.2s;\
     }\
     .aicw-close:hover { background: rgba(255,255,255,0.3); }\
     .aicw-close svg { width: 16px; height: 16px; }\
-    /* ── Loading welcome ───────────── */\
-    .aicw-loading-welcome {\
-      flex: 1; display: flex; flex-direction: column;\
-      align-items: center; justify-content: center;\
-      padding: 32px 24px; text-align: center;\
+    /* Avatar area */\
+    .aicw-avatar-area {\
+      flex: 1; display: flex; flex-direction: column; align-items: center;\
+      justify-content: center; padding: 24px; text-align: center;\
+      background: linear-gradient(180deg, #f8f6ff 0%, #fff 100%);\
     }\
-    .aicw-loading-welcome h2 {\
-      font-size: 18px; font-weight: 700; color: #1a1a2e;\
-      margin: 0 0 8px;\
-    }\
-    .aicw-loading-welcome p {\
-      font-size: 13px; color: #6b7280; margin: 0 0 24px;\
-    }\
-    .aicw-welcome-spinner {\
-      width: 40px; height: 40px;\
-      border: 4px solid #e5e7eb;\
-      border-top-color: " + primaryColor + ";\
-      border-radius: 50%;\
-      animation: aicw-spin 0.8s linear infinite;\
-    }\
-    @keyframes aicw-spin {\
-      to { transform: rotate(360deg); }\
-    }\
-    /* ── Results area ──────────────── */\
-    .aicw-results-area {\
-      flex: 1; overflow-y: auto;\
-      padding: 12px;\
-    }\
-    .aicw-result-group {\
-      margin-bottom: 16px;\
-    }\
-    .aicw-result-header {\
-      font-size: 11px; font-weight: 600;\
-      color: #6b7280; text-transform: uppercase;\
-      letter-spacing: 0.05em;\
-      padding: 0 4px 8px; margin: 0;\
-    }\
-    .aicw-results-grid {\
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));\
-      gap: 10px;\
-    }\
-    @media (min-width: 768px) {\
-      .aicw-results-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }\
-    }\
-    /* ── Rich product card ─────────── */\
-    .aicw-rp {\
-      border: 1px solid #e5e7eb; border-radius: 12px;\
-      overflow: hidden; background: #fff;\
-      transition: box-shadow 0.2s;\
-    }\
-    .aicw-rp:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }\
-    .aicw-rp-img-wrap {\
-      position: relative; aspect-ratio: 1;\
-      background: #f3f4f6; overflow: hidden;\
-    }\
-    .aicw-rp-img {\
-      width: 100%; height: 100%; object-fit: cover;\
-    }\
-    .aicw-rp-badges {\
-      position: absolute; top: 6px; left: 6px;\
-      display: flex; flex-direction: column; gap: 4px;\
-    }\
-    .aicw-badge-bestseller {\
-      font-size: 9px; font-weight: 700; text-transform: uppercase;\
-      background: linear-gradient(135deg, #f59e0b, #d97706);\
-      color: #fff; padding: 2px 6px; border-radius: 4px;\
-      letter-spacing: 0.04em;\
-    }\
-    .aicw-badge-discount {\
-      font-size: 9px; font-weight: 700;\
-      background: #10b981; color: #fff;\
-      padding: 2px 6px; border-radius: 4px;\
-    }\
-    .aicw-rp-body { padding: 8px 10px 10px; }\
-    .aicw-rp-name {\
-      font-weight: 600; font-size: 12px; line-height: 1.3;\
-      overflow: hidden; text-overflow: ellipsis;\
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;\
-      color: #1a1a2e; margin: 0 0 4px;\
-    }\
-    .aicw-rp-rating {\
-      display: flex; align-items: center; gap: 4px;\
-      margin-bottom: 4px;\
-    }\
-    .aicw-rp-stars { display: flex; gap: 1px; color: #f59e0b; }\
-    .aicw-rp-stars svg { width: 10px; height: 10px; }\
-    .aicw-rp-verified {\
-      font-size: 9px; color: #6b7280;\
-    }\
-    .aicw-rp-price-row {\
-      display: flex; align-items: baseline; gap: 4px;\
-      margin-bottom: 4px;\
-    }\
-    .aicw-rp-price {\
-      font-weight: 700; font-size: 14px; color: #1a1a2e;\
-    }\
-    .aicw-rp-old-price {\
-      font-size: 11px; color: #9ca3af; text-decoration: line-through;\
-    }\
-    .aicw-rp-discount-pct {\
-      font-size: 10px; font-weight: 600; color: #10b981;\
-    }\
-    .aicw-rp-coupon {\
-      font-size: 9px; background: #fef3c7; color: #92400e;\
-      padding: 2px 6px; border-radius: 4px;\
-      display: inline-block; margin-bottom: 6px;\
-    }\
-    .aicw-rp-link {\
-      display: flex; align-items: center; justify-content: center; gap: 4px;\
-      font-size: 11px; color: #6b7280;\
-      text-decoration: none; transition: color 0.2s;\
-      padding: 4px 0 0;\
-    }\
-    .aicw-rp-link:hover { color: " + primaryColor + "; }\
-    .aicw-rp-link svg { width: 12px; height: 12px; }\
-    /* ── Bottom bar ────────────────── */\
-    .aicw-bottom-bar {\
-      flex-shrink: 0;\
-      border-top: 1px solid #e5e7eb;\
-      padding: 8px 12px;\
-      display: flex; align-items: center; gap: 10px;\
-      background: #fafafa;\
-    }\
-    .aicw-mic-btn {\
-      width: 72px; height: 72px;\
-      border-radius: 50%; border: none;\
-      cursor: pointer;\
+    .aicw-avatar-circle {\
+      width: 120px; height: 120px; border-radius: 50%;\
+      background: linear-gradient(135deg, " + primaryColor + ", #a78bfa);\
       display: flex; align-items: center; justify-content: center;\
-      transition: transform 0.2s, background 0.2s;\
-      position: relative;\
+      margin-bottom: 16px; position: relative;\
+      box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25);\
+    }\
+    .aicw-avatar-circle svg { width: 48px; height: 48px; color: #fff; }\
+    .aicw-avatar-circle.speaking { animation: aicw-avatar-pulse 1.5s ease-in-out infinite; }\
+    .aicw-avatar-circle.listening { animation: aicw-avatar-pulse 0.8s ease-in-out infinite; }\
+    @keyframes aicw-avatar-pulse {\
+      0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25); }\
+      50% { transform: scale(1.08); box-shadow: 0 12px 48px rgba(108, 59, 235, 0.4); }\
+    }\
+    .aicw-avatar-status {\
+      font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 8px;\
+    }\
+    .aicw-avatar-sub {\
+      font-size: 12px; color: #9ca3af;\
+    }\
+    .aicw-transcript {\
+      margin-top: 12px; padding: 8px 16px; border-radius: 12px;\
+      background: #f3f4f6; font-size: 13px; color: #374151;\
+      max-width: 90%; word-wrap: break-word;\
+    }\
+    /* Mic button */\
+    .aicw-mic-btn {\
+      width: 72px; height: 72px; border-radius: 50%; border: none;\
+      cursor: pointer; display: flex; align-items: center; justify-content: center;\
+      transition: transform 0.2s, background 0.2s; position: relative;\
       color: #fff; flex-shrink: 0;\
     }\
     .aicw-mic-btn svg { width: 32px; height: 32px; position: relative; z-index: 1; }\
-    .aicw-mic-btn.small {\
-      width: 40px; height: 40px;\
-    }\
+    .aicw-mic-btn.small { width: 40px; height: 40px; }\
     .aicw-mic-btn.small svg { width: 20px; height: 20px; }\
     .aicw-mic-btn.idle { background: " + primaryColor + "; }\
     .aicw-mic-btn.listening { background: #ef4444; }\
@@ -208,72 +89,66 @@
     .aicw-mic-btn.speaking { background: #10b981; pointer-events: none; }\
     .aicw-mic-btn:hover { transform: scale(1.06); }\
     .aicw-mic-btn::before {\
-      content: '';\
-      position: absolute; inset: -6px;\
-      border-radius: 50%;\
-      border: 2px solid;\
-      opacity: 0;\
-      animation: none;\
+      content: ''; position: absolute; inset: -6px; border-radius: 50%;\
+      border: 2px solid; opacity: 0; animation: none;\
     }\
-    .aicw-mic-btn.small::before { inset: -4px; }\
     .aicw-mic-btn.idle::before {\
-      border-color: " + primaryColor + ";\
-      opacity: 0.3;\
-      animation: aicw-pulse 2s ease-in-out infinite;\
+      border-color: " + primaryColor + "; opacity: 0.3; animation: aicw-pulse 2s ease-in-out infinite;\
     }\
     .aicw-mic-btn.listening::before {\
-      border-color: #ef4444;\
-      opacity: 0.5;\
-      animation: aicw-pulse 1s ease-in-out infinite;\
+      border-color: #ef4444; opacity: 0.5; animation: aicw-pulse 1s ease-in-out infinite;\
     }\
     @keyframes aicw-pulse {\
       0%, 100% { transform: scale(1); opacity: 0.3; }\
       50% { transform: scale(1.15); opacity: 0; }\
     }\
+    /* Spinner */\
+    .aicw-spinner {\
+      width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3);\
+      border-top-color: #fff; border-radius: 50%;\
+      animation: aicw-spin 0.8s linear infinite; position: relative; z-index: 1;\
+    }\
+    @keyframes aicw-spin { to { transform: rotate(360deg); } }\
+    /* Bottom bar */\
+    .aicw-bottom-bar {\
+      flex-shrink: 0; border-top: 1px solid #e5e7eb; padding: 8px 12px;\
+      display: flex; align-items: center; gap: 10px; background: #fafafa;\
+    }\
     .aicw-bar-info {\
-      flex: 1; display: flex; flex-direction: column;\
-      align-items: center; gap: 2px; min-width: 0;\
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0;\
     }\
     .aicw-bar-status {\
-      font-size: 11px; color: #6b7280;\
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\
-      max-width: 100%;\
+      font-size: 11px; color: #6b7280; white-space: nowrap;\
+      overflow: hidden; text-overflow: ellipsis; max-width: 100%;\
     }\
-    .aicw-bar-waveform {\
-      width: 100%; height: 28px;\
-    }\
+    .aicw-bar-waveform { width: 100%; height: 28px; }\
     .aicw-cancel-btn {\
-      font-size: 11px; color: #6b7280;\
-      background: none; border: 1px solid #e5e7eb;\
-      border-radius: 999px; padding: 4px 12px;\
-      cursor: pointer; transition: color 0.2s;\
-      flex-shrink: 0;\
+      font-size: 11px; color: #6b7280; background: none;\
+      border: 1px solid #e5e7eb; border-radius: 999px;\
+      padding: 4px 12px; cursor: pointer; transition: color 0.2s; flex-shrink: 0;\
     }\
     .aicw-cancel-btn:hover { color: #ef4444; border-color: #ef4444; }\
-    /* ── Idle center layout ────────── */\
-    .aicw-center-idle {\
-      flex: 1; display: flex; flex-direction: column;\
-      align-items: center; justify-content: center;\
-      padding: 32px 24px;\
+    /* Product links list */\
+    .aicw-product-links {\
+      padding: 8px 16px; overflow-y: auto; flex: 1;\
     }\
-    .aicw-center-idle p {\
-      font-size: 13px; color: #6b7280; margin: 16px 0 0; text-align: center;\
+    .aicw-product-link-item {\
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px;\
+      border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 8px;\
+      cursor: pointer; transition: background 0.2s, border-color 0.2s;\
+      text-decoration: none; color: #1a1a2e;\
     }\
-    .aicw-spinner {\
-      width: 24px; height: 24px;\
-      border: 3px solid rgba(255,255,255,0.3);\
-      border-top-color: #fff;\
-      border-radius: 50%;\
-      animation: aicw-spin 0.8s linear infinite;\
-      position: relative; z-index: 1;\
-    }\
+    .aicw-product-link-item:hover { background: #f9fafb; border-color: " + primaryColor + "; }\
+    .aicw-product-link-name { flex: 1; font-size: 13px; font-weight: 500; }\
+    .aicw-product-link-price { font-size: 13px; font-weight: 700; color: " + primaryColor + "; }\
+    .aicw-product-link-item svg { width: 14px; height: 14px; color: #9ca3af; flex-shrink: 0; }\
+    /* Powered */\
     .aicw-powered {\
-      text-align: center; font-size: 10px; color: #9ca3af;\
-      padding: 4px 0 8px; flex-shrink: 0;\
+      text-align: center; font-size: 10px; color: #9ca3af; padding: 4px 0 8px; flex-shrink: 0;\
     }";
   }
 
-  // ── Shopify helpers ─────────────────────────────────────────────────
+  // ── Shopify helpers ────────────────────────────────────────────────
   function isShopify() {
     try { return typeof window !== "undefined" && !!window.Shopify && !!window.Shopify.shop; } catch (e) { return false; }
   }
@@ -344,38 +219,21 @@
     });
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────
+  // ── Fetch Shopify catalog client-side ──────────────────────────────
+  function fetchShopifyCatalog() {
+    if (!isShopify()) return Promise.resolve([]);
+    return fetch("/products.json?limit=250")
+      .then(function (r) { return r.ok ? r.json() : { products: [] }; })
+      .then(function (d) { return d.products || []; })
+      .catch(function () { return []; });
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────
   function generateSessionId() {
     return "session_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
   }
 
-  function miniMarkdown(text) {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/\n/g, "<br>");
-  }
-
-  // Extract product blocks as data from AI response
-  function extractProducts(content) {
-    var products = [];
-    var regex = /:::product\n([\s\S]*?):::/g;
-    var match;
-    while ((match = regex.exec(content)) !== null) {
-      var props = {};
-      match[1].split("\n").forEach(function (line) {
-        var i = line.indexOf(":");
-        if (i > 0) { var k = line.slice(0, i).trim(); var v = line.slice(i + 1).trim(); if (k && v) props[k] = v; }
-      });
-      if (props.name) products.push(props);
-    }
-    return products;
-  }
-
-  // Extract action blocks
+  // Extract action blocks from AI response
   function extractActions(content) {
     var actions = [];
     var regex = /:::action\n([\s\S]*?):::/g;
@@ -391,9 +249,9 @@
     return actions;
   }
 
-  // Clean text for TTS — strip product/action blocks, markdown, emojis
+  // Clean text for TTS — strip action blocks, markdown, emojis
   function cleanForTTS(content) {
-    var text = content
+    return content
       .replace(/:::(product|action)\n[\s\S]*?:::/g, "")
       .replace(/\*\*(.+?)\*\*/g, "$1")
       .replace(/\*(.+?)\*/g, "$1")
@@ -403,84 +261,15 @@
       .replace(/\n+/g, ". ")
       .replace(/\s+/g, " ")
       .trim();
-    return text;
   }
 
-  // Rich product card renderer
-  function renderProductCardRich(p) {
-    var img = p.image
-      ? '<div class="aicw-rp-img-wrap"><img class="aicw-rp-img" src="' + p.image + '" alt="' + (p.name || "") + '" loading="lazy" onerror="this.style.display=\'none\'"/>'
-      : '<div class="aicw-rp-img-wrap">';
-
-    // Badges
-    var badges = '';
-    var rating = parseFloat(p.rating) || 0;
-    if (rating >= 4.2) {
-      badges += '<span class="aicw-badge-bestseller">★ Bestseller</span>';
-    }
-
-    var numPrice = parseFloat((p.price || "").replace(/[^\d.]/g, "")) || 0;
-    var numDiscount = parseFloat((p.discount_price || "").replace(/[^\d.]/g, "")) || 0;
-    var discountPct = 0;
-    if (numDiscount > 0 && numPrice > numDiscount) {
-      discountPct = Math.round(((numPrice - numDiscount) / numPrice) * 100);
-    }
-    if (discountPct > 0) {
-      badges += '<span class="aicw-badge-discount">' + discountPct + '% OFF</span>';
-    }
-
-    if (badges) {
-      img += '<div class="aicw-rp-badges">' + badges + '</div>';
-    }
-    img += '</div>';
-
-    // Rating stars
-    var ratingHtml = '';
-    if (rating > 0) {
-      var starsHtml = '';
-      for (var s = 0; s < 5; s++) {
-        var starOpacity = s < Math.round(rating) ? '1' : '0.25';
-        starsHtml += '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="opacity:' + starOpacity + '"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
-      }
-      ratingHtml = '<div class="aicw-rp-rating"><div class="aicw-rp-stars">' + starsHtml + '</div><span class="aicw-rp-verified">' + rating.toFixed(1) + ' Verified</span></div>';
-    }
-
-    // Price
-    var displayPrice = p.discount_price || p.price || "";
-    var priceHtml = '<div class="aicw-rp-price-row"><span class="aicw-rp-price">' + displayPrice + '</span>';
-    if (p.discount_price && p.price) {
-      priceHtml += '<span class="aicw-rp-old-price">' + p.price + '</span>';
-      if (discountPct > 0) {
-        priceHtml += '<span class="aicw-rp-discount-pct">↓' + discountPct + '%</span>';
-      }
-    }
-    priceHtml += '</div>';
-
-    // Coupon
-    var couponHtml = p.discount_code
-      ? '<div class="aicw-rp-coupon">🏷️ ' + p.discount_code + '</div>'
-      : '';
-
-    // Link
-    var linkHtml = '<a class="aicw-rp-link" href="' + (p.link || "#") + '" target="_blank" rel="noopener">' + ICONS.link + ' View Details</a>';
-
-    return '<div class="aicw-rp">' + img +
-      '<div class="aicw-rp-body">' +
-        '<div class="aicw-rp-name">' + (p.name || "Product") + '</div>' +
-        ratingHtml +
-        priceHtml +
-        couponHtml +
-        linkHtml +
-      '</div></div>';
-  }
-
-  // ── Widget ──────────────────────────────────────────────────────────
+  // ── Widget ─────────────────────────────────────────────────────────
   function createWidget(config) {
     var apiUrl = config.apiUrl;
     var apiKey = config.apiKey;
     var storeId = config.storeId;
     var primaryColor = config.primaryColor || "#6c3beb";
-    var title = config.title || "Shopping Assistant";
+    var title = config.title || "Bella Vita AI";
     var position = config.position || "bottom-right";
     var zIndex = config.zIndex || 99999;
     var platform = config.platform;
@@ -493,6 +282,7 @@
     var conversationId = null;
     var isOpen = false;
     var pendingActions = [];
+    var shopifyCatalog = []; // client-fetched products
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -508,15 +298,19 @@
     var currentAudio = null;
     var voiceMessages = [];
     var waveformRafId = 0;
-
-    // Result groups state
-    var resultGroups = []; // [{query: string, products: []}]
-    var isWelcomeLoading = false;
     var welcomeTriggered = false;
+    var isWelcomeLoading = false;
 
-    function hasResults() { return resultGroups.length > 0 && resultGroups.some(function(g) { return g.products.length > 0; }); }
+    // Product links extracted from AI responses
+    var productLinks = []; // [{name, price, link}]
 
-    function handleAction(action) { pendingActions.push(action); }
+    // Fetch catalog on init if Shopify
+    if (isShopifyPlatform) {
+      fetchShopifyCatalog().then(function (products) {
+        shopifyCatalog = products;
+        console.log("[AI Widget] Fetched " + products.length + " products from Shopify catalog");
+      });
+    }
 
     function executePendingActions() {
       var actions = pendingActions.slice();
@@ -527,12 +321,20 @@
           case "add_to_cart":
             if (action.product_name) {
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                console.log("Add to cart result:", result.message);
+                console.log("Add to cart:", result.message);
               });
             }
             break;
           case "open_product":
-            if (action.product_link) shopifyNavigate(action.product_link);
+            // Collect as product link instead of navigating immediately
+            if (action.product_name) {
+              productLinks.push({
+                name: action.product_name,
+                link: action.product_link || "#",
+                price: ""
+              });
+              render();
+            }
             break;
           case "navigate_to_checkout":
             shopifyGoToCheckout();
@@ -544,7 +346,7 @@
       });
     }
 
-    // Create host element — full-screen overlay, hidden by default
+    // Host element — full-screen overlay
     var host = document.createElement("div");
     host.id = "ai-chat-widget";
     host.style.position = "fixed";
@@ -554,7 +356,6 @@
     document.body.appendChild(host);
 
     var shadow = host.attachShadow({ mode: "closed" });
-
     var styleEl = document.createElement("style");
     styleEl.textContent = getWidgetStyles(primaryColor);
     shadow.appendChild(styleEl);
@@ -563,8 +364,7 @@
     root.className = "aicw-root";
     shadow.appendChild(root);
 
-    // ── Voice helpers ──────────────────────────────────────────────
-
+    // ── Voice ────────────────────────────────────────────────────
     function setVoiceState(state, status) {
       voiceState = state;
       voiceStatusText = status || "";
@@ -591,17 +391,13 @@
 
     function cancelVoice() {
       stopMic();
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
-      }
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
       setVoiceState("idle", "");
     }
 
     function startListening() {
       audioChunks = [];
       voiceTranscript = "";
-
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         micStream = stream;
         setVoiceState("listening", "Listening... speak now");
@@ -635,19 +431,12 @@
           var now = Date.now();
           if (rms < 0.01) {
             if (vadSilenceStart === 0) vadSilenceStart = now;
-            else if (now - vadSilenceStart > 2000) {
-              stopMic();
-              return;
-            }
-          } else {
-            vadSilenceStart = 0;
-          }
+            else if (now - vadSilenceStart > 2000) { stopMic(); return; }
+          } else { vadSilenceStart = 0; }
           vadRafId = requestAnimationFrame(checkVAD);
         }
         vadRafId = requestAnimationFrame(checkVAD);
-
         startWaveform();
-
       }).catch(function (err) {
         console.error("Mic access denied:", err);
         setVoiceState("idle", "Microphone access denied");
@@ -664,7 +453,6 @@
       function draw() {
         if (voiceState !== "listening" || !analyserNode) return;
         analyserNode.getByteFrequencyData(freqData);
-
         var dpr = window.devicePixelRatio || 1;
         var w = canvas.clientWidth;
         var h = canvas.clientHeight;
@@ -672,11 +460,9 @@
         canvas.height = h * dpr;
         ctx.scale(dpr, dpr);
         ctx.clearRect(0, 0, w, h);
-
         var gap = 2;
         var barW = (w - (barCount - 1) * gap) / barCount;
         var centerY = h / 2;
-
         for (var i = 0; i < barCount; i++) {
           var dataIdx = Math.floor((i / barCount) * freqData.length);
           var val = freqData[dataIdx] / 255;
@@ -696,11 +482,9 @@
 
     function processAudio(blob) {
       setVoiceState("processing", "Processing...");
-
       var reader = new FileReader();
       reader.onloadend = function () {
         var base64 = reader.result.split(",")[1];
-
         fetch(sttUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
@@ -714,11 +498,8 @@
           voiceTranscript = transcript;
           setVoiceState("processing", "Thinking...");
           render();
-
           voiceMessages.push({ role: "user", content: transcript });
-
           sendToChat(transcript);
-
         }).catch(function (err) {
           console.error("STT error:", err);
           setVoiceState("idle", "Speech recognition failed. Try again.");
@@ -727,17 +508,22 @@
       reader.readAsDataURL(blob);
     }
 
-    // Send a message to chat API and handle response (used by both welcome and voice)
     function sendToChat(query) {
+      // Build request with client products and native display flag
+      var requestBody = {
+        messages: voiceMessages.map(function (m) { return { role: m.role, content: m.content }; }),
+        sessionId: sessionId,
+        conversationId: conversationId,
+        storeId: storeId,
+        nativeDisplay: isShopifyPlatform,
+        storeDomain: isShopifyPlatform ? window.location.origin : undefined,
+        clientProducts: shopifyCatalog.length > 0 ? shopifyCatalog : undefined
+      };
+
       fetch(chatUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-        body: JSON.stringify({
-          messages: voiceMessages.map(function (m) { return { role: m.role, content: m.content }; }),
-          sessionId: sessionId,
-          conversationId: conversationId,
-          storeId: storeId
-        })
+        body: JSON.stringify(requestBody)
       }).then(function (resp) {
         var convIdHeader = resp.headers.get("X-Conversation-Id");
         if (convIdHeader && !conversationId) conversationId = convIdHeader;
@@ -757,10 +543,7 @@
 
         function pump() {
           return streamReader.read().then(function (result) {
-            if (result.done) {
-              onChatComplete(fullResponse, query);
-              return;
-            }
+            if (result.done) { onChatComplete(fullResponse, query); return; }
             textBuffer += decoder.decode(result.value, { stream: true });
             var newlineIndex;
             while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
@@ -784,7 +567,7 @@
         }
         return pump();
       }).catch(function (err) {
-        console.error("Voice chat error:", err);
+        console.error("Chat error:", err);
         setVoiceState("idle", "Connection error. Try again.");
         isWelcomeLoading = false;
         render();
@@ -794,16 +577,28 @@
     function onChatComplete(fullResponse, query) {
       voiceMessages.push({ role: "assistant", content: fullResponse });
 
-      // Extract products and prepend as new result group
-      var products = extractProducts(fullResponse);
-      if (products.length > 0) {
-        resultGroups.unshift({ query: query || "Results", products: products });
-      }
-
-      // Execute actions
+      // Extract and execute actions (which now include product links for navigation)
       var actions = extractActions(fullResponse);
-      actions.forEach(handleAction);
-      executePendingActions();
+      // Collect open_product actions as product links
+      productLinks = [];
+      actions.forEach(function (action) {
+        if (action.type === "open_product" && action.product_name) {
+          productLinks.push({
+            name: action.product_name,
+            link: action.product_link || "#"
+          });
+        } else if (action.type === "add_to_cart") {
+          if (isShopifyPlatform && action.product_name) {
+            addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+              console.log("Add to cart:", result.message);
+            });
+          }
+        } else if (action.type === "navigate_to_checkout") {
+          if (isShopifyPlatform) shopifyGoToCheckout();
+        } else if (action.type === "navigate_to_cart") {
+          if (isShopifyPlatform) shopifyGoToCart();
+        }
+      });
 
       isWelcomeLoading = false;
 
@@ -817,6 +612,7 @@
       }
 
       setVoiceState("speaking", "Speaking...");
+      render();
 
       fetch(ttsUrl, {
         method: "POST",
@@ -824,14 +620,12 @@
         body: JSON.stringify({ text: ttsText.slice(0, 500), sessionId: sessionId, target_language_code: "hi-IN" })
       }).then(function (r) { return r.json(); }).then(function (ttsResult) {
         if (voiceState !== "speaking") return;
-
         var audioBase64 = ttsResult.audio;
         if (!audioBase64) {
           setVoiceState("idle", "");
           setTimeout(startListening, 500);
           return;
         }
-
         currentAudio = new Audio("data:audio/wav;base64," + audioBase64);
         currentAudio.onended = function () {
           currentAudio = null;
@@ -857,19 +651,15 @@
     }
 
     function onMicToggle() {
-      if (voiceState === "idle") {
-        startListening();
-      } else if (voiceState === "listening") {
-        stopMic();
-        setVoiceState("idle", "");
-      }
+      if (voiceState === "idle") startListening();
+      else if (voiceState === "listening") { stopMic(); setVoiceState("idle", ""); }
     }
 
-    // Auto-welcome: send initial query when widget opens
     function triggerWelcome() {
       if (welcomeTriggered) return;
       welcomeTriggered = true;
       isWelcomeLoading = true;
+      productLinks = [];
       render();
 
       var welcomeQuery = "Hi, show me top selling Bella Vita products";
@@ -877,8 +667,7 @@
       sendToChat("Welcome");
     }
 
-    // ── Render ─────────────────────────────────────────────────────
-
+    // ── Render ────────────────────────────────────────────────────
     function render() {
       if (!isOpen) {
         host.style.display = "none";
@@ -887,47 +676,89 @@
       }
       host.style.display = "block";
 
-      var bodyHtml = "";
+      // Avatar state
+      var avatarClass = "";
+      var micIcon = ICONS.mic;
+      var micClass = "idle";
+      var statusText = "Tap the mic to ask me anything!";
 
-      if (isWelcomeLoading && !hasResults()) {
-        // Loading state
-        bodyHtml = '<div class="aicw-loading-welcome">\
-          <h2>Welcome to Bella Vita</h2>\
-          <p>Connecting to your shopping assistant...</p>\
-          <div class="aicw-welcome-spinner"></div>\
-        </div>';
-      } else if (hasResults()) {
-        // Results layout: scrollable grid + compact bottom bar
-        var groupsHtml = resultGroups.map(function (group) {
-          if (!group.products.length) return "";
-          return '<div class="aicw-result-group">\
-            <div class="aicw-result-header">Results for: ' + group.query + '</div>\
-            <div class="aicw-results-grid">' + group.products.map(renderProductCardRich).join("") + '</div>\
-          </div>';
+      if (isWelcomeLoading) {
+        avatarClass = "speaking";
+        statusText = "Connecting to your assistant...";
+      } else if (voiceState === "listening") {
+        avatarClass = "listening";
+        micIcon = ICONS.micOff;
+        micClass = "listening";
+        statusText = "Listening... speak now";
+      } else if (voiceState === "processing") {
+        avatarClass = "";
+        micIcon = '<div class="aicw-spinner"></div>';
+        micClass = "processing";
+        statusText = voiceStatusText || "Thinking...";
+      } else if (voiceState === "speaking") {
+        avatarClass = "speaking";
+        micIcon = ICONS.voice;
+        micClass = "speaking";
+        statusText = "Speaking...";
+      }
+
+      var transcriptHtml = voiceTranscript
+        ? '<div class="aicw-transcript">"' + voiceTranscript + '"</div>'
+        : '';
+
+      // Product links section
+      var productLinksHtml = "";
+      if (productLinks.length > 0) {
+        var linksItems = productLinks.map(function (p) {
+          return '<a class="aicw-product-link-item" href="' + p.link + '" target="_self">\
+            <span class="aicw-product-link-name">' + p.name + '</span>\
+            ' + ICONS.link + '\
+          </a>';
         }).join("");
+        productLinksHtml = '<div class="aicw-product-links">' + linksItems + '</div>';
+      }
 
-        bodyHtml = '<div class="aicw-results-area">' + groupsHtml + '</div>' + renderBottomBar();
+      // Cancel button
+      var cancelBtn = (voiceState === "processing" || voiceState === "speaking")
+        ? '<button class="aicw-cancel-btn">Cancel</button>'
+        : '';
+
+      var bottomBarStatus = voiceStatusText || (voiceState === "idle" ? "Tap mic to ask..." : "");
+
+      // Layout: avatar area + optional product links + bottom bar
+      var hasProductLinks = productLinks.length > 0;
+
+      var bodyHtml;
+      if (hasProductLinks) {
+        // Show product links with compact bottom bar
+        bodyHtml = productLinksHtml + '\
+          <div class="aicw-bottom-bar">\
+            <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+            <div class="aicw-bar-info">\
+              <div class="aicw-bar-status">' + bottomBarStatus + '</div>\
+              <canvas class="aicw-bar-waveform"></canvas>\
+            </div>' + cancelBtn + '\
+          </div>';
       } else {
-        // Idle, no results yet
-        var micIcon = ICONS.mic;
-        var micClass = "idle";
-        if (voiceState === "listening") { micIcon = ICONS.micOff; micClass = "listening"; }
-        else if (voiceState === "processing") { micIcon = '<div class="aicw-spinner"></div>'; micClass = "processing"; }
-        else if (voiceState === "speaking") { micIcon = ICONS.voice; micClass = "speaking"; }
-
-        bodyHtml = '<div class="aicw-center-idle">\
-          <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-          <p>Tap the mic and ask me anything!</p>\
-        </div>';
+        // Avatar-first layout
+        bodyHtml = '\
+          <div class="aicw-avatar-area">\
+            <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
+            <div class="aicw-avatar-status">' + statusText + '</div>\
+            <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
+            ' + transcriptHtml + '\
+            <div style="margin-top: 24px;">\
+              <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+            </div>\
+          </div>';
       }
 
       root.innerHTML = '\
         <div class="aicw-panel">\
           <div class="aicw-header">\
-            <div class="aicw-header-title">' + ICONS.mic + '<span>Bella Vita AI</span></div>\
+            <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
             <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
-          </div>' +
-          bodyHtml + '\
+          </div>' + bodyHtml + '\
           <div class="aicw-powered">Powered by AI</div>\
         </div>';
 
@@ -938,7 +769,7 @@
         render();
       });
 
-      // Bind mic buttons (both center idle and bottom bar)
+      // Bind mic
       root.querySelectorAll(".aicw-mic-btn").forEach(function (btn) {
         if (voiceState === "idle" || voiceState === "listening") {
           btn.addEventListener("click", onMicToggle);
@@ -949,49 +780,36 @@
       var cancelEl = root.querySelector(".aicw-cancel-btn");
       if (cancelEl) cancelEl.addEventListener("click", cancelVoice);
 
-      // Re-start waveform if listening
-      if (voiceState === "listening" && analyserNode) {
-        startWaveform();
+      // Bind product link clicks for Shopify native navigation
+      if (isShopifyPlatform) {
+        root.querySelectorAll(".aicw-product-link-item").forEach(function (el) {
+          el.addEventListener("click", function (e) {
+            e.preventDefault();
+            var href = el.getAttribute("href");
+            if (href && href !== "#") {
+              shopifyNavigate(href);
+            }
+          });
+        });
       }
-    }
 
-    function renderBottomBar() {
-      var micIcon = ICONS.mic;
-      var micClass = "idle";
-      if (voiceState === "listening") { micIcon = ICONS.micOff; micClass = "listening"; }
-      else if (voiceState === "processing") { micIcon = '<div class="aicw-spinner"></div>'; micClass = "processing"; }
-      else if (voiceState === "speaking") { micIcon = ICONS.voice; micClass = "speaking"; }
-
-      var cancelBtn = (voiceState === "processing" || voiceState === "speaking")
-        ? '<button class="aicw-cancel-btn">Cancel</button>'
-        : '';
-
-      var statusText = voiceStatusText || (voiceState === "idle" ? "Tap mic to ask..." : "");
-
-      return '<div class="aicw-bottom-bar">\
-        <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-        <div class="aicw-bar-info">\
-          <div class="aicw-bar-status">' + statusText + '</div>\
-          <canvas class="aicw-bar-waveform"></canvas>\
-        </div>' +
-        cancelBtn + '\
-      </div>';
+      // Waveform
+      if (voiceState === "listening" && analyserNode) startWaveform();
     }
 
     render();
 
     return {
       open: function () { isOpen = true; render(); triggerWelcome(); },
-      close: function () { isOpen = false; render(); },
+      close: function () { cancelVoice(); isOpen = false; render(); },
       destroy: function () { cancelVoice(); host.remove(); }
     };
   }
 
-  // ── Auto-init ───────────────────────────────────────────────────────
+  // ── Auto-init ──────────────────────────────────────────────────────
   function init() {
     var globalConfig = window.AIChatConfig || {};
     var scriptEl = document.currentScript || document.querySelector("script[data-store-id]");
-
     function attr(name) { return scriptEl ? scriptEl.getAttribute("data-" + name) : null; }
 
     var config = {
@@ -999,7 +817,7 @@
       apiUrl: globalConfig.apiUrl || attr("api-url") || "",
       apiKey: globalConfig.apiKey || attr("api-key") || "",
       primaryColor: globalConfig.primaryColor || attr("primary-color") || "#6c3beb",
-      title: globalConfig.title || attr("title") || "Shopping Assistant",
+      title: globalConfig.title || attr("title") || "Bella Vita AI",
       position: globalConfig.position || attr("position") || "bottom-right",
       zIndex: globalConfig.zIndex || parseInt(attr("z-index") || "99999", 10),
       platform: globalConfig.platform || attr("platform") || undefined
