@@ -1,35 +1,52 @@
 
 
-# Fix: Published Widget Script Is Outdated (1023 lines vs 1176 lines)
+# Fine-tune Bot for Hinglish / Hindi Speaking
 
-## Root Cause
+## What We'll Do
 
-The published file at `voice-cart-guide.lovable.app/ai-chat-widget.js` is still the **old 1023-line version** without:
-- MIME normalization
-- Container sniffing
-- Auto-retry on STT failure
-- Max recording timeout
-- The simplified open/close flow
+We'll make two key changes so the bot speaks naturally in Hinglish (a mix of Hindi and English that Indian shoppers use) and sounds great in Hindi:
 
-Your Shopify store loads this old script, which has a different recording pipeline that sends audio in a format Sarvam STT rejects (400 error). That is why STT logs show zero processing requests -- the old widget either doesn't send properly or fails silently.
+1. **Update the system prompt** in the chat function to instruct the AI to always respond in natural Hinglish (Roman Hindi mixed with English), making it sound like a friendly Indian shop assistant
+2. **Switch to a better Hindi voice** and tune ElevenLabs voice settings for natural Hindi/Hinglish pronunciation
+3. **Increase TTS text limit** from 500 to 1000 characters so longer Hindi responses don't get cut off
 
-## The Fix
+---
 
-Since publishing doesn't seem to be updating the static file, we need to force it by making a trivial change to the widget file (e.g., bumping the version comment) and then you publish again. Additionally, we should add a cache-busting query parameter to ensure Shopify loads the fresh version.
+## Technical Changes
 
-### Step 1: Bump version string in `public/ai-chat-widget.js`
-- Change the version comment from `v2.1` to `v2.2` to force a content change on publish
+### 1. Chat Edge Function (`supabase/functions/chat/index.ts`)
 
-### Step 2: You click Publish -> Update again
+Update the system prompt's language instructions:
 
-### Step 3: Update your Shopify `theme.liquid` script tag
-Add a cache-busting parameter to ensure browsers and CDNs don't serve the stale file:
-```html
-<script src="https://voice-cart-guide.lovable.app/ai-chat-widget.js?v=3"></script>
-```
+- Change from "respond in the same language the user uses" to **always default to Hinglish**
+- Add explicit Hinglish speaking style instructions:
+  - "Tum ek friendly Indian shopping assistant ho. Hamesha Hinglish mein baat karo — jaise ek dost se baat kar rahe ho."
+  - "Mix Hindi and English naturally, e.g. 'Ye perfume bohot popular hai, long-lasting fragrance hai aur price bhi quite affordable hai.'"
+  - "Use Roman Hindi script, NOT Devanagari. Write Hindi words in English letters."
+  - "Keep sentences short and conversational for voice output."
+- Update the welcome message to be more natural Hinglish: "Hello! Main aapka shopping assistant hoon. Bella Vita store par aapka swagat hai! Batao kya dhundh rahe ho?"
 
-### Step 4: Verify
-After publishing, we will fetch the published URL again to confirm it now has 1176 lines with the `v2.2` header.
+### 2. TTS Edge Function (`supabase/functions/sarvam-tts/index.ts`)
 
-## Why This Keeps Happening
-Static files in `public/` may be cached by the CDN or browser. A version bump + cache-busting parameter on the Shopify side is the permanent solution.
+- **Voice**: Switch from Sarah (`EXAVITQu4vr4xnSDxMaL`) to **Lily** (`pFZP5JQG7iQjIQuC4Bku`) which has better Hindi pronunciation with the multilingual v2 model, OR keep Sarah but tune settings
+- **Voice settings**: Adjust for more natural Hindi speech:
+  - `stability`: 0.4 (more expressive, natural conversational tone)
+  - `similarity_boost`: 0.8
+  - `style`: 0.4 (slightly more stylized for warmth)
+  - `speed`: 0.95 (slightly slower for clearer Hindi words)
+- **Text limit**: Increase from 500 to 1000 characters
+- **Audio quality**: Upgrade from `mp3_22050_32` to `mp3_44100_128` for clearer pronunciation
+
+### 3. No Model Change Needed
+
+The current Lovable AI (Gemini) model already supports Hinglish well. The key improvement is in the **prompt engineering** — telling it exactly how to speak in Hinglish style, and in the **voice settings** for more natural Hindi TTS output.
+
+---
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `supabase/functions/chat/index.ts` | Update system prompt for Hinglish default language |
+| `supabase/functions/sarvam-tts/index.ts` | Tune voice settings, increase text limit, upgrade audio quality |
+
