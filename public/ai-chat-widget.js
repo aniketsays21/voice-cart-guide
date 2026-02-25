@@ -221,7 +221,27 @@
     .aicw-toast.aicw-toast-cart {\
       background: #16a34a; font-size: 14px; padding: 12px 20px;\
     }\
-    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }";
+    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }\
+    /* Start Call button */\
+    .aicw-start-btn {\
+      width: 100%; max-width: 200px; padding: 14px 32px; border: none; border-radius: 999px;\
+      background: #16a34a; color: #fff; font-size: 16px; font-weight: 700;\
+      cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;\
+      display: flex; align-items: center; justify-content: center; gap: 8px;\
+      box-shadow: 0 4px 16px rgba(22, 163, 74, 0.3);\
+    }\
+    .aicw-start-btn:hover { transform: scale(1.05); box-shadow: 0 6px 24px rgba(22, 163, 74, 0.4); }\
+    .aicw-start-btn svg { width: 20px; height: 20px; }\
+    /* End Call button */\
+    .aicw-end-call-btn {\
+      padding: 8px 20px; border: none; border-radius: 999px;\
+      background: #ef4444; color: #fff; font-size: 13px; font-weight: 600;\
+      cursor: pointer; transition: transform 0.2s, background 0.2s;\
+      display: flex; align-items: center; justify-content: center; gap: 6px;\
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);\
+    }\
+    .aicw-end-call-btn:hover { background: #dc2626; transform: scale(1.05); }\
+    .aicw-end-call-btn svg { width: 14px; height: 14px; }";
   }
 
   // ── Shopify helpers ────────────────────────────────────────────────
@@ -357,6 +377,7 @@
     var sessionId = generateSessionId();
     var conversationId = null;
     var isOpen = false;
+    var callActive = false; // NEW: pre-call state
     var pendingActions = [];
     var shopifyCatalog = []; // client-fetched products
     var inCartHandles = {}; // track handles added to cart
@@ -863,12 +884,28 @@
       if (welcomeTriggered) return;
       welcomeTriggered = true;
       isWelcomeLoading = true;
+      callActive = true;
       pendingNavigation = null;
       render();
 
-      var welcomeQuery = "Hi, show me top selling Bella Vita products";
+      var welcomeQuery = "Hi, welcome me to Bella Vita store and show me top selling products";
       voiceMessages.push({ role: "user", content: welcomeQuery });
       sendToChat(welcomeQuery);
+    }
+
+    function endCall() {
+      cancelVoice();
+      callActive = false;
+      welcomeTriggered = false;
+      isWelcomeLoading = false;
+      voiceMessages = [];
+      productCards = [];
+      showProductGrid = false;
+      inCartHandles = {};
+      voiceTranscript = "";
+      conversationId = null;
+      isOpen = false;
+      render();
     }
 
     // Language detection for TTS
@@ -911,11 +948,44 @@
       }
       host.style.display = "block";
 
+      // End Call button HTML (always visible when call is active)
+      var endCallHtml = callActive
+        ? '<button class="aicw-end-call-btn" aria-label="End Call"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.88.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>End Call</button>'
+        : '';
+
+      // Pre-call screen: show Start button before call is active
+      if (!callActive) {
+        root.innerHTML = '\
+          <div class="aicw-panel">\
+            <div class="aicw-header">\
+              <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
+              <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
+            </div>\
+            <div class="aicw-avatar-area">\
+              <div class="aicw-avatar-circle">' + ICONS.voice + '</div>\
+              <div class="aicw-avatar-status">Your AI Shopping Assistant</div>\
+              <div class="aicw-avatar-sub">Tap Start to begin your voice shopping experience</div>\
+              <div style="margin-top: 32px;">\
+                <button class="aicw-start-btn">' + ICONS.mic + ' Start</button>\
+              </div>\
+            </div>\
+            <div class="aicw-powered">Powered by AI</div>\
+          </div>';
+
+        root.querySelector(".aicw-close").addEventListener("click", function () {
+          isOpen = false; render();
+        });
+        root.querySelector(".aicw-start-btn").addEventListener("click", function () {
+          triggerWelcome();
+        });
+        return;
+      }
+
       // Avatar state
       var avatarClass = "";
       var micIcon = ICONS.mic;
       var micClass = "idle";
-      var statusText = "Tap the mic to ask me anything!";
+      var statusText = "Listening...";
 
       if (isWelcomeLoading) {
         avatarClass = "speaking";
@@ -949,11 +1019,6 @@
         navHtml = '<div class="aicw-transcript">Navigating to store page after response...</div>';
       }
 
-      // Cancel button
-      var cancelBtn = (voiceState === "processing" || voiceState === "speaking")
-        ? '<button class="aicw-cancel-btn">Cancel</button>'
-        : '';
-
       var bodyHtml;
 
       if (showProductGrid && productCards.length > 1) {
@@ -984,19 +1049,20 @@
             </div>';
         }).join("");
 
-        // Compact mic bar for product grid view
         var gridMicIcon = micIcon;
         var gridMicClass = micClass;
         var gridStatusText = statusText;
         if (voiceState === "idle" && !isWelcomeLoading) {
-          gridStatusText = "Say a command...";
+          gridStatusText = "Listening...";
         }
         var gridWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
 
         bodyHtml = '\
-          <div style="padding: 10px 12px 4px; display: flex; align-items: center; gap: 8px;">\
-            <button class="aicw-cancel-btn aicw-back-btn" style="padding: 4px 12px;">← Back</button>\
-            <span style="font-size: 13px; font-weight: 600; color: #374151;">Recommended for you</span>\
+          <div style="padding: 10px 12px 4px; display: flex; align-items: center; justify-content: space-between;">\
+            <div style="display: flex; align-items: center; gap: 8px;">\
+              <button class="aicw-cancel-btn aicw-back-btn" style="padding: 4px 12px;">← Back</button>\
+              <span style="font-size: 13px; font-weight: 600; color: #374151;">Recommended for you</span>\
+            </div>\
           </div>\
           <div class="aicw-product-grid">' + cardsHtml + '</div>\
           <div class="aicw-bottom-bar">\
@@ -1005,7 +1071,7 @@
               <div class="aicw-bar-status">' + gridStatusText + '</div>\
               ' + gridWaveformHtml + '\
             </div>\
-            ' + ((voiceState === "processing" || voiceState === "speaking") ? '<button class="aicw-cancel-btn">Cancel</button>' : '') + '\
+            ' + endCallHtml + '\
           </div>';
       } else {
         bodyHtml = '\
@@ -1018,7 +1084,7 @@
             <div style="margin-top: 24px;">\
               <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
             </div>\
-            ' + (cancelBtn ? '<div style="margin-top: 8px;">' + cancelBtn + '</div>' : '') + '\
+            <div style="margin-top: 16px;">' + endCallHtml + '</div>\
           </div>';
       }
 
@@ -1031,11 +1097,9 @@
           <div class="aicw-powered">Powered by AI</div>\
         </div>';
 
-      // Bind close
+      // Bind close (same as end call during active call)
       root.querySelector(".aicw-close").addEventListener("click", function () {
-        cancelVoice();
-        isOpen = false;
-        render();
+        endCall();
       });
 
       // Bind back button
@@ -1101,11 +1165,9 @@
         }
       });
 
-      // Bind cancel
-      var cancelEl = root.querySelector(".aicw-cancel-btn:not(.aicw-back-btn)");
-      if (cancelEl) cancelEl.addEventListener("click", function () {
-        pendingNavigation = null;
-        cancelVoice();
+      // Bind End Call buttons
+      root.querySelectorAll(".aicw-end-call-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () { endCall(); });
       });
 
       // Waveform
