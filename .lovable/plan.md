@@ -1,80 +1,55 @@
 
 
-# Deploy AI Chat Widget to Your Shopify Store
+# Serve Widget Bundle from Published Lovable URL
 
-## Overview
+## Goal
+Make the chat widget available at `https://voice-cart-guide.lovable.app/ai-chat-widget.js` so you can embed it on any Shopify store without needing to build locally.
 
-Here's the complete end-to-end process to get your AI assistant live on your Shopify website. No Shopify API keys needed -- the widget uses Shopify's built-in public APIs automatically.
+## How It Works
+Files in the `public/` folder of a Lovable project are served as-is at the published URL. By placing a ready-to-use JavaScript file there, Shopify (or any website) can load it directly via a script tag.
 
----
+## Plan
 
-## Step-by-Step Process
+### Step 1: Create `public/ai-chat-widget.js`
+Convert the existing TypeScript widget source (`src/embed/`) into a single, self-contained JavaScript file and place it in `public/`. This file will contain:
+- All the widget logic (chat panel, message rendering, streaming)
+- All styles (inline CSS)
+- All SVG icons (inline)
+- Shopify integration (add-to-cart, navigation, product search)
+- The auto-initialization code
 
-### Step 1: Build the Widget Bundle
+No build step needed -- this is plain JavaScript wrapped in an IIFE.
 
-I'll add a build script to `package.json` so you can easily generate the widget file. Then you run:
+### Step 2: Update `public/embed-demo.html`
+Point the demo page's script tag to `/ai-chat-widget.js` so you can test the widget locally in the Lovable preview.
 
-```
-npm run build:widget
-```
+## After Implementation
 
-This creates a single file: `dist-widget/ai-chat-widget.js`
-
-### Step 2: Host the File
-
-**Easiest option -- use your Shopify store itself:**
-
-1. In your Shopify Admin, go to **Settings -> Files**
-2. Click **Upload files** and upload the `ai-chat-widget.js` file
-3. Shopify gives you a CDN URL like: `https://cdn.shopify.com/s/files/1/xxxx/xxxx/files/ai-chat-widget.js`
-4. Copy that URL -- you'll need it in the next step
-
-### Step 3: Add the Script to Your Shopify Theme
-
-1. In Shopify Admin, go to **Online Store -> Themes**
-2. Click **"..." -> Edit code** on your active theme
-3. Open the file `theme.liquid` (under Layout)
-4. Paste this code just **before** the closing `</body>` tag:
+Your Shopify embed code becomes:
 
 ```html
-<script
-  src="YOUR_CDN_URL_FROM_STEP_2"
-  data-store-id="your-store-name"
-  data-api-url="https://cjgyelmkjgwgwbwydddz.supabase.co"
-  data-api-key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ3llbG1ramd3Z3did3lkZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MjUzNzUsImV4cCI6MjA4NzUwMTM3NX0.pdf-BL2W6o4PFsiPjXYjanDWCEswWpt6SZoSqS86-sU"
-  data-title="Bella Vita Assistant"
-  data-primary-color="#6c3beb"
-></script>
+<script>
+  window.AIChatConfig = {
+    storeId: "your-store-name",
+    apiUrl: "https://cjgyelmkjgwgwbwydddz.supabase.co",
+    apiKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ3llbG1ramd3Z3did3lkZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MjUzNzUsImV4cCI6MjA4NzUwMTM3NX0.pdf-BL2W6o4PFsiPjXYjanDWCEswWpt6SZoSqS86-sU",
+    title: "Your Store Assistant",
+    primaryColor: "#6c3beb",
+    welcomeMessage: "Hi! How can I help you today?",
+    suggestions: ["Show me products", "Best sellers"],
+    position: "bottom-right"
+  };
+</script>
+<script src="https://voice-cart-guide.lovable.app/ai-chat-widget.js"></script>
 ```
 
-5. Click **Save**
+No local build, no CLI, no GitHub -- just paste this into your Shopify theme and publish.
 
-### Step 4: Done -- It's Live!
+## Technical Details
 
-Visit your Shopify store. You'll see the chat bubble in the bottom-right corner. The widget automatically:
-- Detects it's on Shopify (via `window.Shopify`)
-- Uses Shopify's native `/cart/add.js` for "add to cart" commands
-- Navigates to real product pages on your store
-- Handles checkout/cart redirects
-
----
-
-## What I'll Change in Code
-
-| File | Change |
-|---|---|
-| `package.json` | Add `"build:widget"` script for convenience |
-
-This is a one-line change to make building easier. Everything else is already implemented.
-
----
-
-## Checklist Before Going Live
-
-- Build the widget: `npm run build:widget`
-- Upload `dist-widget/ai-chat-widget.js` to Shopify Files
-- Paste the script tag in `theme.liquid` before `</body>`
-- Replace `YOUR_CDN_URL_FROM_STEP_2` with the actual Shopify CDN URL
-- Replace `your-store-name` with your actual store identifier
-- Visit your store and test the chat bubble
+- The `public/ai-chat-widget.js` file is a manually compiled version of the TypeScript source in `src/embed/`
+- It uses an IIFE (Immediately Invoked Function Expression) to avoid polluting the global scope
+- Shadow DOM is used for style isolation so Shopify theme CSS won't affect the widget
+- Future changes to the widget source will need to be reflected in this file as well
+- The file will be approximately 15-20 KB unminified
 
