@@ -668,27 +668,19 @@
       pendingNavigation = null;
 
       // Handle actions — navigate to real Shopify pages
-      var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
-
-      if (openProductActions.length === 1) {
-        // Single product — navigate to PDP
-        var action = openProductActions[0];
-        var handle = action.product_handle || extractHandle(action.product_link || "");
-        if (handle) pendingNavigation = "/products/" + handle;
-      } else if (openProductActions.length > 1 && isShopifyPlatform) {
-        // Multiple products — navigate to search page
-        // Build a search query from the user's last message
-        var lastUserMsg = "";
-        for (var i = voiceMessages.length - 1; i >= 0; i--) {
-          if (voiceMessages[i].role === "user") { lastUserMsg = voiceMessages[i].content; break; }
-        }
-        if (lastUserMsg) {
-          pendingNavigation = "/search?q=" + encodeURIComponent(lastUserMsg);
-        }
-      }
-
       actions.forEach(function (action) {
-        if (action.type === "add_to_cart") {
+        if (action.type === "open_product") {
+          var handle = action.product_handle || extractHandle(action.product_link || "");
+          if (handle && !pendingNavigation) pendingNavigation = "/products/" + handle;
+        } else if (action.type === "navigate_to_search") {
+          if (isShopifyPlatform && action.query) {
+            pendingNavigation = "/search?q=" + encodeURIComponent(action.query);
+          }
+        } else if (action.type === "navigate_to_collection") {
+          if (isShopifyPlatform && action.collection_handle) {
+            pendingNavigation = "/collections/" + action.collection_handle;
+          }
+        } else if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
             addToCartByProduct(action.product_name, action.product_link).then(function (result) {
               showToast(result.message, !result.success);
