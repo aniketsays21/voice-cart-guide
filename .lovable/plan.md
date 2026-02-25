@@ -1,90 +1,77 @@
 
 
-# Full-Page Voice Agent via "Bella Vita AI" Menu Button
+# Voice Agent Actions with Visual Feedback on Shopify
 
 ## What Changes
 
-Replace the small floating widget panel with a **full-page overlay** that opens when the user clicks a "Bella Vita AI" button in the Shopify navigation. The experience will match the in-app AI Assistant exactly — full-screen product grid, voice-only interaction, compact mic bar at the bottom.
+The voice agent will execute real Shopify actions (add to cart, open product, checkout, apply discount) when the user speaks commands, AND show visual toast notifications so the user sees what's happening.
 
-## Current vs. New
+## Current State
 
-```text
-CURRENT:
-  [Purple mic FAB in corner]
-     --> Opens small 400x600 panel
+The system prompt already instructs the AI to output `:::action` blocks for commands like "add to cart", "open product", "go to checkout", etc. The widget already parses these actions and executes them via Shopify's AJAX API (`/cart/add.js`, `/products/handle.js`, etc.).
 
-NEW:
-  [Bella Vita AI] button in Shopify menu
-     --> Opens full-screen overlay covering the entire page
-     --> Auto-loads products, voice interaction, rich product grid
-     --> Close button returns to the store
+**Problem**: There's no visual feedback. The add-to-cart result is only logged to `console.log`. The user has no idea the action happened.
+
+## What Will Work After This Change
+
+| Voice Command | Action | Visual Feedback |
+|---|---|---|
+| "Add [product] to cart" | Calls Shopify `/cart/add.js` | Toast: "Product added to cart!" with green check |
+| "Open [product]" | Navigates to product page | Toast: "Opening product..." |
+| "Go to checkout" | Redirects to `/checkout` | Toast: "Going to checkout..." |
+| "Show my cart" | Redirects to `/cart` | Toast: "Opening cart..." |
+| "Buy [product]" | Add to cart + go to checkout | Toast sequence |
+| "Tell me about [product]" | AI responds with product info | Voice response plays |
+
+## Technical Changes
+
+### File: `public/ai-chat-widget.js`
+
+**1. Add Toast Notification CSS**
+
+New styles for a toast notification that slides in from the top of the overlay:
+- `.aicw-toast` -- fixed position toast with icon, message, and auto-dismiss animation
+- Success (green), info (blue), and error (red) variants
+- Auto-fades out after 3 seconds
+
+**2. Add `showToast(message, type)` function**
+
+Creates a temporary toast element in the shadow DOM that auto-removes after 3 seconds. Types: "success", "info", "error".
+
+**3. Update `executePendingActions()` with visual feedback**
+
+Currently:
+```javascript
+case "add_to_cart":
+  addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+    console.log("Add to cart result:", result.message);
+  });
 ```
 
-## Visual Layout
-
-```text
-+--------------------------------------------------+
-| [X Close]                        Bella Vita AI    |
-|--------------------------------------------------|
-|                                                   |
-|  Results for: Welcome                             |
-|  [Product] [Product] [Product] [Product]          |
-|  [Product] [Product] [Product] [Product]          |
-|                                                   |
-|  Results for: "perfumes under 500"                |
-|  [Product] [Product] [Product] [Product]          |
-|                                                   |
-|--------------------------------------------------|
-|  [mic]  ~~~~waveform~~~~   "Tap mic to ask..."    |
-+--------------------------------------------------+
+New behavior:
+```javascript
+case "add_to_cart":
+  showToast("Adding " + action.product_name + " to cart...", "info");
+  addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+    if (result.success) {
+      showToast(result.message, "success");
+    } else {
+      showToast(result.message, "error");
+    }
+  });
 ```
 
-## Changes to `public/ai-chat-widget.js`
+Same pattern for all action types -- show a toast before navigation actions.
 
-### 1. Remove the Floating Action Button (FAB)
-- No more fixed-position purple circle button in the corner
-- The widget no longer renders anything until `window.AIChatWidget.open()` is called
+**4. Remove the `if (!isShopifyPlatform) return` guard for feedback**
 
-### 2. Full-Page Overlay Instead of Small Panel
-- Replace the 400x600px `.aicw-panel` with a **full-screen overlay** (`position: fixed; inset: 0`)
-- White background, covers the entire viewport
-- Close button (X) in the top-right returns to the store page
+Currently, actions silently fail on non-Shopify. Instead, show a toast saying "This action works on the Shopify store" so the user at least gets feedback during testing.
 
-### 3. Responsive Product Grid
-- With full-screen space, expand the grid from 2 columns to **3-4 columns** on desktop, 2 on mobile
-- Product cards get slightly more room for details
+**5. Update Shopify cart count after add-to-cart**
 
-### 4. Update CSS
-- `.aicw-panel` becomes `width: 100%; height: 100vh; border-radius: 0; max-width: none; max-height: none;`
-- `.aicw-results-grid` uses `grid-template-columns: repeat(auto-fill, minmax(160px, 1fr))` for responsive columns
-- Remove `.aicw-fab` styles (no longer needed)
-- Add a header bar with "Bella Vita AI" title and close button
+After a successful add-to-cart, dispatch `cart:refresh` event AND update `[data-cart-count]` elements (already partially implemented in `shopify.ts`, will be inlined into the widget since it's a standalone IIFE).
 
-### 5. Host Element Changes
-- Instead of a fixed-position corner element, the host element becomes a full-screen container with `position: fixed; inset: 0; z-index: 99999`
-- Hidden by default, shown when `.open()` is called
+### No Backend Changes Needed
 
-### 6. Auto-Init Without FAB
-- On load, the widget only sets up `window.AIChatWidget` API — no visible UI
-- When `.open()` is called (from any Shopify button), it shows the full-page overlay and triggers the welcome flow
-
-### Shopify Integration
-Add a menu item or button anywhere in the Shopify theme:
-
-```html
-<button onclick="window.AIChatWidget.open()">Bella Vita AI</button>
-```
-
-Or add it to the Shopify navigation menu as a link with:
-```html
-<a href="#" onclick="event.preventDefault(); window.AIChatWidget.open();">Bella Vita AI</a>
-```
-
-## What Stays the Same
-- All voice logic (recording, VAD, STT, TTS, auto-restart)
-- Product card rendering (rich cards with badges, ratings, discounts)
-- Result groups organized by query
-- Auto-welcome on open
-- Shopify actions (add to cart, navigate)
-- `window.AIChatWidget` API (`.open()`, `.close()`, `.destroy()`)
+The AI chat function already has the correct action prompt format. The Shopify APIs (`/cart/add.js`, `/products/handle.js`) are native Shopify endpoints that work automatically when the widget runs on a Shopify store.
 
