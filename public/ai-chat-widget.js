@@ -516,7 +516,8 @@
           var blob = new Blob(audioChunks, { type: recordingMimeType });
           if (blob.size < 500) {
             console.log("[AI Widget] Audio too small, ignoring. Size:", blob.size);
-            setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
+            setVoiceState("idle", "Didn't catch that. Listening again...");
+            if (callActive) setTimeout(startListening, 1500);
             return;
           }
           processAudio(blob);
@@ -600,11 +601,12 @@
         fetch(sttUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-          body: JSON.stringify({ audio: base64, sessionId: sessionId })
+          body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: blob.type || "audio/webm" })
         }).then(function (r) { return r.json(); }).then(function (sttResult) {
           var transcript = sttResult.transcript;
           if (!transcript || !transcript.trim()) {
-      setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
+            setVoiceState("idle", "Didn't catch that. Listening again...");
+            if (callActive) setTimeout(startListening, 1500);
             return;
           }
           voiceTranscript = transcript;
@@ -614,7 +616,8 @@
           sendToChat(transcript);
         }).catch(function (err) {
           console.error("STT error:", err);
-          setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
+          setVoiceState("idle", "Didn't catch that. Listening again...");
+          if (callActive) setTimeout(startListening, 1500);
         });
       };
       reader.readAsDataURL(blob);
