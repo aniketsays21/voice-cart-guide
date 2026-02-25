@@ -1,125 +1,90 @@
-# Replicate In-App Assistant Flow to Shopify Widget
+
+
+# Full-Page Voice Agent via "Bella Vita AI" Menu Button
 
 ## What Changes
 
-When a user clicks the purple mic button on Shopify, the widget will behave exactly like the in-app AI Assistant page — auto-loading top products on open, showing a rich scrollable product grid, and placing the mic in a compact bottom bar once results appear.
+Replace the small floating widget panel with a **full-page overlay** that opens when the user clicks a "Bella Vita AI" button in the Shopify navigation. The experience will match the in-app AI Assistant exactly — full-screen product grid, voice-only interaction, compact mic bar at the bottom.
 
-## Current vs. New Flow
+## Current vs. New
 
 ```text
-CURRENT SHOPIFY WIDGET:
-+---------------------------+
-| Header                    |
-| Welcome text              |
-| Products (basic cards)    |
-| Transcript                |
-| Status                    |
-| Waveform                  |
-| [BIG MIC BUTTON]          |
-| Powered by AI             |
-+---------------------------+
+CURRENT:
+  [Purple mic FAB in corner]
+     --> Opens small 400x600 panel
 
-NEW FLOW (matches in-app):
-+---------------------------+
-| Header                [X] |
-|                           |
-| "Welcome to Bella Vita"   |  <-- loading state on open
-| Connecting to assistant...|
-|       [spinner]           |
-|                           |
-+---------------------------+
-         |
-         v  (auto-fetches products)
-+---------------------------+
-| Header                [X] |
-| Results for: Welcome      |
-| [Product] [Product]       |  <-- rich cards with badges,
-| [Product] [Product]       |      ratings, discount %,
-| [Product] [Product]       |      "View Details" links
-|  (scrollable)             |
-|---------------------------|
-| [mic] ~~~waveform~~~      |  <-- compact bottom bar
-|        "Tap mic..."       |
-+---------------------------+
+NEW:
+  [Bella Vita AI] button in Shopify menu
+     --> Opens full-screen overlay covering the entire page
+     --> Auto-loads products, voice interaction, rich product grid
+     --> Close button returns to the store
 ```
 
-## Key Features to Replicate
+## Visual Layout
 
-### 1. Auto-Welcome on Open
+```text
++--------------------------------------------------+
+| [X Close]                        Bella Vita AI    |
+|--------------------------------------------------|
+|                                                   |
+|  Results for: Welcome                             |
+|  [Product] [Product] [Product] [Product]          |
+|  [Product] [Product] [Product] [Product]          |
+|                                                   |
+|  Results for: "perfumes under 500"                |
+|  [Product] [Product] [Product] [Product]          |
+|                                                   |
+|--------------------------------------------------|
+|  [mic]  ~~~~waveform~~~~   "Tap mic to ask..."    |
++--------------------------------------------------+
+```
 
-When the widget opens, it immediately sends "Hi, show me top selling Bella Vita products" to the chat API and shows a loading spinner with "Welcome to Bella Vita / Connecting to your shopping assistant..." text.
+## Changes to `public/ai-chat-widget.js`
 
-### 2. Rich Product Cards
+### 1. Remove the Floating Action Button (FAB)
+- No more fixed-position purple circle button in the corner
+- The widget no longer renders anything until `window.AIChatWidget.open()` is called
 
-Product cards in the widget will match the in-app design:
+### 2. Full-Page Overlay Instead of Small Panel
+- Replace the 400x600px `.aicw-panel` with a **full-screen overlay** (`position: fixed; inset: 0`)
+- White background, covers the entire viewport
+- Close button (X) in the top-right returns to the store page
 
-- Product image with aspect-ratio square
-- "Bestseller" badge (gold) for ratings >= 4.2
-- Discount percentage badge (green) calculated from price vs discount_price
-- Star rating with "Verified" text
-- Price with strikethrough original price when discounted
-- Discount coupon code display
-- "View Details" link opens product in new tab
+### 3. Responsive Product Grid
+- With full-screen space, expand the grid from 2 columns to **3-4 columns** on desktop, 2 on mobile
+- Product cards get slightly more room for details
 
-### 3. Two-Layout Mode
+### 4. Update CSS
+- `.aicw-panel` becomes `width: 100%; height: 100vh; border-radius: 0; max-width: none; max-height: none;`
+- `.aicw-results-grid` uses `grid-template-columns: repeat(auto-fill, minmax(160px, 1fr))` for responsive columns
+- Remove `.aicw-fab` styles (no longer needed)
+- Add a header bar with "Bella Vita AI" title and close button
 
-- **No results yet**: Full-screen centered layout with loading spinner or welcome mic button
-- **Has results**: Scrollable product grid taking most of the space, with a compact bottom bar containing a small mic button, waveform visualization, and status text
+### 5. Host Element Changes
+- Instead of a fixed-position corner element, the host element becomes a full-screen container with `position: fixed; inset: 0; z-index: 99999`
+- Hidden by default, shown when `.open()` is called
 
-### 4. Result Groups
+### 6. Auto-Init Without FAB
+- On load, the widget only sets up `window.AIChatWidget` API — no visible UI
+- When `.open()` is called (from any Shopify button), it shows the full-page overlay and triggers the welcome flow
 
-Results are organized by query (e.g., "Welcome", then "perfumes under 500") with headers showing "Results for: [query]". New results appear at the top, previous results scroll below.
+### Shopify Integration
+Add a menu item or button anywhere in the Shopify theme:
 
-### 5. Continuous Listening
+```html
+<button onclick="window.AIChatWidget.open()">Bella Vita AI</button>
+```
 
-After voice response plays, the mic auto-restarts for follow-up questions (already partially implemented, will be refined).
+Or add it to the Shopify navigation menu as a link with:
+```html
+<a href="#" onclick="event.preventDefault(); window.AIChatWidget.open();">Bella Vita AI</a>
+```
 
-## Technical Details
+## What Stays the Same
+- All voice logic (recording, VAD, STT, TTS, auto-restart)
+- Product card rendering (rich cards with badges, ratings, discounts)
+- Result groups organized by query
+- Auto-welcome on open
+- Shopify actions (add to cart, navigate)
+- `window.AIChatWidget` API (`.open()`, `.close()`, `.destroy()`)
 
-### File: `public/ai-chat-widget.js`
-
-**New state variables:**
-
-- `resultGroups` (array of `{query, products}`) -- tracks multiple query results
-- `isWelcomeLoading` (boolean) -- shows loading spinner on first open
-- `hasResults` (boolean) -- determines layout mode
-
-**New/Modified functions:**
-
-- `triggerWelcome()` -- auto-sends welcome query on open, parses response into result groups
-- `renderProductCardRich(p)` -- enhanced product card with badges, ratings, discount calculation
-- `renderVoiceMode()` -- completely rewritten to support two layouts:
-  - Loading state (spinner + welcome text)
-  - Results layout (scrollable grid + compact bottom bar)
-  - Idle/no-results (centered mic button)
-- `onChatComplete()` -- modified to append new result groups instead of replacing `voiceProducts`
-
-**New CSS classes:**
-
-- `.aicw-results-area` -- scrollable container for product grid
-- `.aicw-result-group` -- wrapper per query result
-- `.aicw-result-header` -- "Results for: [query]" label
-- `.aicw-bottom-bar` -- compact mic + waveform bar
-- `.aicw-product-badge` -- bestseller/discount badge overlay
-- `.aicw-product-rating` -- star rating row
-- `.aicw-loading-welcome` -- centered loading spinner state
-- `.aicw-mic-btn.small` -- smaller mic button for bottom bar
-
-**Removed:**
-
-- `voiceProducts` flat array (replaced by `resultGroups`)
-- Old single-layout voice area rendering
-
-### Flow on open:
-
-1. User clicks purple mic FAB
-2. Widget opens showing "Welcome to Bella Vita" + spinner
-3. Auto-sends welcome message to chat API (streaming, collected)
-4. Products parsed from response, stored as first result group
-5. Layout switches to results view with product grid
-6. TTS plays the commentary
-7. Mic auto-starts for follow-up questions
-
-&nbsp;
-
-everything is voice based, nothing is text based, it will take response in voice and respond back in voice. 
