@@ -35,26 +35,11 @@
     .aicw-root *, .aicw-root *::before, .aicw-root *::after {\
       box-sizing: border-box;\
     }\
-    .aicw-fab {\
-      width: 56px; height: 56px;\
-      border-radius: 50%;\
-      background: " + primaryColor + ";\
-      color: #fff;\
-      border: none;\
-      cursor: pointer;\
-      display: flex; align-items: center; justify-content: center;\
-      box-shadow: 0 4px 20px rgba(0,0,0,0.2);\
-      transition: transform 0.2s;\
-    }\
-    .aicw-fab:hover { transform: scale(1.08); }\
-    .aicw-fab svg { width: 24px; height: 24px; }\
     .aicw-panel {\
-      width: 400px; max-width: calc(100vw - 2rem);\
-      height: 600px; max-height: calc(100vh - 3rem);\
-      border-radius: 16px;\
-      border: 1px solid #e5e7eb;\
+      width: 100%; height: 100%;\
+      border-radius: 0;\
+      border: none;\
       background: #fff;\
-      box-shadow: 0 8px 40px rgba(0,0,0,0.15);\
       display: flex; flex-direction: column;\
       overflow: hidden;\
     }\
@@ -118,8 +103,11 @@
       padding: 0 4px 8px; margin: 0;\
     }\
     .aicw-results-grid {\
-      display: grid; grid-template-columns: 1fr 1fr;\
-      gap: 8px;\
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));\
+      gap: 10px;\
+    }\
+    @media (min-width: 768px) {\
+      .aicw-results-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }\
     }\
     /* ── Rich product card ─────────── */\
     .aicw-rp {\
@@ -556,13 +544,13 @@
       });
     }
 
-    // Create host element
+    // Create host element — full-screen overlay, hidden by default
     var host = document.createElement("div");
     host.id = "ai-chat-widget";
     host.style.position = "fixed";
-    host.style[position === "bottom-left" ? "left" : "right"] = "24px";
-    host.style.bottom = "24px";
+    host.style.inset = "0";
     host.style.zIndex = String(zIndex);
+    host.style.display = "none";
     document.body.appendChild(host);
 
     var shadow = host.attachShadow({ mode: "closed" });
@@ -893,14 +881,11 @@
 
     function render() {
       if (!isOpen) {
-        root.innerHTML = '<button class="aicw-fab" aria-label="Talk to us">' + ICONS.mic + '</button>';
-        root.querySelector(".aicw-fab").addEventListener("click", function () {
-          isOpen = true;
-          render();
-          triggerWelcome();
-        });
+        host.style.display = "none";
+        root.innerHTML = "";
         return;
       }
+      host.style.display = "block";
 
       var bodyHtml = "";
 
@@ -939,7 +924,7 @@
       root.innerHTML = '\
         <div class="aicw-panel">\
           <div class="aicw-header">\
-            <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
+            <div class="aicw-header-title">' + ICONS.mic + '<span>Bella Vita AI</span></div>\
             <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
           </div>' +
           bodyHtml + '\
