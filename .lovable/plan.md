@@ -1,58 +1,81 @@
 
 
-# Voice Bot UX Overhaul: Start Call / End Call Flow
+# Fix: Voice Bot Stuck at "Listening..." - Not Processing Input
 
-## What Changes
+## Problem Identified
 
-The current flow auto-triggers the welcome immediately when the widget opens. The new flow adds a clear "Start" and "End Call" pattern, continuous listening, and an updated welcome message.
+After investigating, I found **two issues** causing the bot to get stuck:
 
-## New User Journey
+### Issue 1: Published Version is Outdated
+The live script on your Shopify store (`voice-cart-guide.lovable.app/ai-chat-widget.js`) is still the **old version** (1023 lines). Your project has the new version (1216 lines) with the Start/End Call flow, but it was **never published**. You need to click **Publish > Update** in Lovable.
 
-```text
-1. User clicks "Bella Vita AI" button on Shopify
-2. Widget opens full-screen with avatar + "Start" button
-3. User taps "Start" → bot activates, speaks welcome, shows products
-4. A red "End Call" button stays visible at all times
-5. Bot continuously listens (no need to tap mic repeatedly)
-6. User speaks → AI responds → products display → add to cart works
-7. User taps "End Call" → bot stops, widget closes
+### Issue 2: Recording Pipeline Bug (processAudio)
+Even in the new code, the `processAudio` function does NOT send the `audioMimeType` to the STT backend. The STT backend hardcodes `audio/webm` for all recordings. On Safari/iOS, browsers record in `audio/mp4`, which causes Sarvam AI to reject the audio silently.
+
+Additionally, when STT returns an empty transcript or fails, the bot shows "Didn't catch that" but does NOT auto-restart listening -- it just sits there, requiring a manual mic tap. Since this is a "continuous listening" bot, it should auto-retry.
+
+## Fixes
+
+### File 1: `public/ai-chat-widget.js`
+
+**Fix processAudio to send audioMimeType:**
+- Pass `blob.type` (e.g., `audio/webm`, `audio/mp4`) in the STT request body as `audioMimeType`
+- This lets the backend use the correct MIME type when forwarding to Sarvam AI
+
+**Fix auto-retry on empty transcript:**
+- When STT returns empty/no transcript, auto-restart listening after 1.5 seconds instead of staying stuck at "idle"
+- When STT errors out, also auto-restart listening
+
+**Fix auto-retry on STT network error:**
+- Same auto-restart behavior on catch block
+
+### File 2: `supabase/functions/sarvam-stt/index.ts`
+
+**Accept and use audioMimeType from request:**
+- Read `audioMimeType` from the request body
+- Use it when creating the Blob for Sarvam API (instead of hardcoded `audio/webm`)
+- Derive the correct file extension (`.webm`, `.mp4`, `.ogg`) from the MIME type
+- Fall back to `audio/webm` / `.webm` if not provided
+
+## Technical Details
+
+### Widget changes (processAudio function):
+```javascript
+// Before:
+body: JSON.stringify({ audio: base64, sessionId: sessionId })
+
+// After:
+body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: blob.type || "audio/webm" })
 ```
 
-## Changes Required
+### Widget changes (auto-retry on empty transcript):
+```javascript
+// Before:
+setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
+return;
 
-### File: `public/ai-chat-widget.js`
+// After:
+setVoiceState("idle", "Didn't catch that. Listening again...");
+setTimeout(startListening, 1500);
+return;
+```
 
-**1. New "pre-call" state**
-- Add a `callActive` flag (starts `false`)
-- When widget opens, show the avatar with a green "Start" button instead of auto-triggering welcome
-- Tapping "Start" sets `callActive = true`, then triggers `triggerWelcome()`
+### STT function changes:
+```typescript
+// Before:
+formData.append("file", new Blob([binaryAudio], { type: "audio/webm" }), "recording.webm");
 
-**2. Persistent "End Call" button**
-- Once `callActive` is true, render a red "End Call" button that is always visible on screen (both avatar view and product grid view)
-- Tapping "End Call" cancels voice, resets state, and closes the widget
-
-**3. Update welcome message**
-- Change the hidden welcome query from the current text to something that prompts the AI to say: "Welcome, I am your AI assistant. Bella Vita store par aapka swagat hai, ye rahe kuch best selling products aapke liye"
-
-**4. Continuous listening**
-- The auto-listen-after-TTS already exists. Ensure the mic restarts after every response without user intervention (this is mostly working, just verify no gaps)
-
-**5. CSS additions**
-- `.aicw-start-btn`: Large green "Start" button style
-- `.aicw-end-call-btn`: Red "End Call" button, always visible during active call
-
-### File: `supabase/functions/chat/index.ts`
-
-**6. Update welcome prompt in system prompt**
-- Adjust the `WELCOME BEHAVIOR` section to instruct the AI to say: "Welcome, I am your AI assistant. Bella Vita store par aapka swagat hai, ye rahe kuch best selling products aapke liye" and then show top selling products
-
-## Shopify Catalog Question
-
-You asked: "Do we need an API for searching the Shopify catalog?"
-
-No extra API key is needed. The widget already fetches your full live Shopify catalog using the public `/products.json` endpoint, and the backend also fetches it server-side. This works as long as the store is not password-protected (yours is live, so it works).
+// After:
+const mimeType = audioMimeType || "audio/webm";
+const ext = mimeType.includes("mp4") ? ".mp4" : mimeType.includes("ogg") ? ".ogg" : ".webm";
+formData.append("file", new Blob([binaryAudio], { type: mimeType }), "recording" + ext);
+```
 
 ## Deployment
 
-After these changes, you click **Publish > Update** in Lovable. No Shopify theme file edits needed -- the script auto-updates on page refresh.
+After these changes:
+1. Click **Publish > Update** in Lovable
+2. Hard-refresh the Shopify store page (Ctrl+Shift+R) to bypass cached script
+3. If the old version still loads, add `?v=2` to the script URL in your Shopify theme.liquid (one-time edit)
+4. **No other Shopify file changes needed**
 
