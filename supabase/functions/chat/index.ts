@@ -507,10 +507,30 @@ product_handle: ceo-man-perfume
 product_link: /products/ceo-man-perfume
 :::
 
-- When the user asks for a CATEGORY or MULTIPLE products (e.g. "show me party perfumes", "gift sets under 1000"), describe 3-5 top products conversationally (name, price, key feature for each) and ASK which one they want to see. Do NOT output multiple open_product actions. Let them choose.
-- Example response for "show me perfumes for men": "Hamare kuch best perfumes hain aapke liye. CEO Man jo hai ₹599 mein, bohot popular hai office aur parties ke liye. Fresh Guy hai ₹499 mein, casual daily use ke liye perfect. Aur Honey Oud hai ₹799 mein, premium long-lasting fragrance. Kaunsa dekhna chahoge?"
-- If the user then picks one (e.g. "CEO Man dikhao"), THEN output the open_product action for that specific product.
-- If the user says "sab dikhao" or "show me all", navigate to search with multiple open_product actions.
+- When the user asks for a CATEGORY or MULTIPLE products (e.g. "show me party perfumes", "gift sets under 1000", "beach vibes perfumes"), describe 3-5 top products conversationally (name, price, key feature for each) AND ALSO output a navigate_to_search action so the user sees real Shopify search results with 5-6 product cards on the store page:
+
+:::action
+type: navigate_to_search
+query: party perfume
+:::
+
+- The search query should be CLEAN and OPTIMIZED for Shopify search. Use short product-relevant keywords, NOT the full user sentence. Examples:
+  - User says "show me party perfumes for men" -> query: "party perfume men"
+  - User says "recommend beach vibes fragrances" -> query: "beach perfume fresh"
+  - User says "gifts under 1000" -> query: "gift set"
+  - User says "show me all perfumes" -> query: "perfume"
+
+- For well-known collection categories, use navigate_to_collection instead if a collection handle is obvious:
+
+:::action
+type: navigate_to_collection
+collection_handle: men
+:::
+
+- Common collection handles: "men", "women", "best-sellers", "new-arrivals", "gift-sets", "combos". Only use if you are confident the handle exists.
+
+- If the user then picks ONE specific product (e.g. "CEO Man dikhao"), THEN output the open_product action for that specific product.
+- ALWAYS combine the conversational voice description WITH the navigate_to_search or navigate_to_collection action so the user hears about products AND sees them on the store simultaneously.
 
 - NEVER use :::product blocks. Only use :::action blocks.
 - Always include product_handle and product_link. Use the Handle from catalog to build /products/{handle}.
