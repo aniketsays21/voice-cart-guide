@@ -1,79 +1,125 @@
-
-
-# Voice-Only Widget for Shopify
+# Replicate In-App Assistant Flow to Shopify Widget
 
 ## What Changes
 
-The widget will become a **voice-first experience**. No more chat tab — when customers (or any Shopify button) opens the widget, they go straight to the voice assistant.
+When a user clicks the purple mic button on Shopify, the widget will behave exactly like the in-app AI Assistant page — auto-loading top products on open, showing a rich scrollable product grid, and placing the mic in a compact bottom bar once results appear.
 
-## Changes Overview
+## Current vs. New Flow
 
-### 1. Remove Chat Tab and Chat Mode
+```text
+CURRENT SHOPIFY WIDGET:
++---------------------------+
+| Header                    |
+| Welcome text              |
+| Products (basic cards)    |
+| Transcript                |
+| Status                    |
+| Waveform                  |
+| [BIG MIC BUTTON]          |
+| Powered by AI             |
++---------------------------+
 
-- Remove the tab bar entirely (no "Chat" / "Voice" toggle)
-- Remove the `renderChatMode` function and related chat UI (textarea, send button, message list)
-- The widget opens directly into voice mode
-- Chat-related state variables (`messages`, `isLoading`, `input`) and the `send()` function for text chat will be removed
-
-### 2. Change the Floating Button to a Microphone
-
-- Replace the chat bubble icon on the FAB (floating action button) with a **microphone icon**
-- Optionally add a small label or tooltip: "Talk to us"
-
-### 3. Expose a Global API for External Buttons
-
-The widget already exposes `window.AIChatWidget.open()`. This will continue to work, so any Shopify button can trigger it.
-
-You'll add a simple `onclick` to any button in your Shopify theme:
-
-```html
-<button onclick="window.AIChatWidget.open()">
-  Talk to Assistant
-</button>
+NEW FLOW (matches in-app):
++---------------------------+
+| Header                [X] |
+|                           |
+| "Welcome to Bella Vita"   |  <-- loading state on open
+| Connecting to assistant...|
+|       [spinner]           |
+|                           |
++---------------------------+
+         |
+         v  (auto-fetches products)
++---------------------------+
+| Header                [X] |
+| Results for: Welcome      |
+| [Product] [Product]       |  <-- rich cards with badges,
+| [Product] [Product]       |      ratings, discount %,
+| [Product] [Product]       |      "View Details" links
+|  (scrollable)             |
+|---------------------------|
+| [mic] ~~~waveform~~~      |  <-- compact bottom bar
+|        "Tap mic..."       |
++---------------------------+
 ```
 
-This works with any HTML element — a banner button, a navigation link, a product page CTA, etc.
+## Key Features to Replicate
 
-### 4. Header Update
+### 1. Auto-Welcome on Open
 
-- Header will show the mic icon instead of chat icon
-- Title stays configurable (e.g., "Voice Assistant")
+When the widget opens, it immediately sends "Hi, show me top selling Bella Vita products" to the chat API and shows a loading spinner with "Welcome to Bella Vita / Connecting to your shopping assistant..." text.
+
+### 2. Rich Product Cards
+
+Product cards in the widget will match the in-app design:
+
+- Product image with aspect-ratio square
+- "Bestseller" badge (gold) for ratings >= 4.2
+- Discount percentage badge (green) calculated from price vs discount_price
+- Star rating with "Verified" text
+- Price with strikethrough original price when discounted
+- Discount coupon code display
+- "View Details" link opens product in new tab
+
+### 3. Two-Layout Mode
+
+- **No results yet**: Full-screen centered layout with loading spinner or welcome mic button
+- **Has results**: Scrollable product grid taking most of the space, with a compact bottom bar containing a small mic button, waveform visualization, and status text
+
+### 4. Result Groups
+
+Results are organized by query (e.g., "Welcome", then "perfumes under 500") with headers showing "Results for: [query]". New results appear at the top, previous results scroll below.
+
+### 5. Continuous Listening
+
+After voice response plays, the mic auto-restarts for follow-up questions (already partially implemented, will be refined).
 
 ## Technical Details
 
 ### File: `public/ai-chat-widget.js`
 
-**Remove:**
-- `activeTab` variable and all tab-switching logic
-- `renderChatMode()` function (~45 lines)
-- Tab HTML generation and tab click handlers
-- Text chat `send()` function and related streaming logic (~80 lines)
-- Chat-related state: `messages`, `isLoading` arrays
+**New state variables:**
 
-**Modify:**
-- FAB button: change icon from `ICONS.chat` to `ICONS.mic`, add "Talk to us" label
-- `render()` function: when open, go directly to `renderVoiceMode()` without tabs
-- `renderVoiceMode()`: remove `tabsHtml` parameter since no tabs exist
-- Header icon: use `ICONS.mic` instead of `ICONS.chat`
-- Keep all voice state, STT, TTS, product display, and Shopify action logic intact
+- `resultGroups` (array of `{query, products}`) -- tracks multiple query results
+- `isWelcomeLoading` (boolean) -- shows loading spinner on first open
+- `hasResults` (boolean) -- determines layout mode
 
-**Keep:**
-- `window.AIChatWidget` API (`open`, `close`, `destroy`) — already works for external buttons
-- All voice mode logic (recording, VAD, STT, Chat API, TTS, product cards)
-- Shadow DOM, styles, auto-init
+**New/Modified functions:**
 
-### Shopify Integration
+- `triggerWelcome()` -- auto-sends welcome query on open, parses response into result groups
+- `renderProductCardRich(p)` -- enhanced product card with badges, ratings, discount calculation
+- `renderVoiceMode()` -- completely rewritten to support two layouts:
+  - Loading state (spinner + welcome text)
+  - Results layout (scrollable grid + compact bottom bar)
+  - Idle/no-results (centered mic button)
+- `onChatComplete()` -- modified to append new result groups instead of replacing `voiceProducts`
 
-On your Shopify theme, you can add a button anywhere (header, banner, product page) like:
+**New CSS classes:**
 
-```html
-<button class="voice-assistant-btn" onclick="window.AIChatWidget.open()">
-  Ask our Voice Assistant
-</button>
-```
+- `.aicw-results-area` -- scrollable container for product grid
+- `.aicw-result-group` -- wrapper per query result
+- `.aicw-result-header` -- "Results for: [query]" label
+- `.aicw-bottom-bar` -- compact mic + waveform bar
+- `.aicw-product-badge` -- bestseller/discount badge overlay
+- `.aicw-product-rating` -- star rating row
+- `.aicw-loading-welcome` -- centered loading spinner state
+- `.aicw-mic-btn.small` -- smaller mic button for bottom bar
 
-The floating mic button will still be there as a fallback, but any custom button can also trigger the same panel.
+**Removed:**
 
-### Estimated Change
+- `voiceProducts` flat array (replaced by `resultGroups`)
+- Old single-layout voice area rendering
 
-The file will shrink from ~1128 lines to ~900 lines by removing chat-only code. The voice experience remains identical — mic button, waveform, silence detection, product cards, and auto-restart.
+### Flow on open:
+
+1. User clicks purple mic FAB
+2. Widget opens showing "Welcome to Bella Vita" + spinner
+3. Auto-sends welcome message to chat API (streaming, collected)
+4. Products parsed from response, stored as first result group
+5. Layout switches to results view with product grid
+6. TTS plays the commentary
+7. Mic auto-starts for follow-up questions
+
+&nbsp;
+
+everything is voice based, nothing is text based, it will take response in voice and respond back in voice. 
