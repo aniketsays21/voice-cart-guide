@@ -180,5 +180,40 @@ export function getWidgetStyles(primaryColor: string): string {
       text-align: center; font-size: 10px; color: #9ca3af;
       padding: 4px 0 8px;
     }
+
+    /* Toast notifications */
+    .aicw-toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-10px);
+      z-index: 100000;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+      animation: aicw-toast-in 0.3s ease forwards;
+      max-width: 90vw;
+    }
+    .aicw-toast.aicw-toast-out {
+      animation: aicw-toast-out 0.3s ease forwards;
+    }
+    .aicw-toast-success { background: #16a34a; }
+    .aicw-toast-info { background: #2563eb; }
+    .aicw-toast-error { background: #dc2626; }
+    .aicw-toast svg { width: 18px; height: 18px; flex-shrink: 0; }
+    @keyframes aicw-toast-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes aicw-toast-out {
+      from { opacity: 1; transform: translateX(-50%) translateY(0); }
+      to { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    }
   `;
 }
