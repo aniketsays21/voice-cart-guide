@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,10 +7,33 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// --- Rate limiting ---
+async function checkRateLimit(supabase: any, sessionId: string, functionName: string, maxPerMinute: number): Promise<boolean> {
+  const windowStart = new Date(Date.now() - 60_000).toISOString();
+  const { data } = await supabase
+    .from("rate_limits")
+    .select("id, request_count")
+    .eq("session_id", sessionId)
+    .eq("function_name", functionName)
+    .gte("window_start", windowStart)
+    .order("window_start", { ascending: false })
+    .limit(1);
+
+  if (data && data.length > 0) {
+    if (data[0].request_count >= maxPerMinute) return false;
+    await supabase.from("rate_limits").update({ request_count: data[0].request_count + 1 }).eq("id", data[0].id);
+  } else {
+    await supabase.from("rate_limits").insert({ session_id: sessionId, function_name: functionName, request_count: 1, window_start: new Date().toISOString() });
+  }
+  return true;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  const startTime = Date.now();
 
   try {
     const apiKey = Deno.env.get("SARVAM_API_KEY");
@@ -20,10 +44,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { text, target_language_code } = await req.json();
-    if (!text) {
-      return new Response(JSON.stringify({ error: "text is required" }), {
+    const body = await req.json();
+    const { text, target_language_code, sessionId } = body;
+
+    // Input validation
+    if (!text || typeof text !== "string") {
+      return new Response(JSON.stringify({ error: "text (string) is required" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (text.length > 2000) {
+      return new Response(JSON.stringify({ error: "Text too long (max 2000 chars)" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Rate limiting
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const effectiveSessionId = sessionId || "anonymous";
+
+    const allowed = await checkRateLimit(supabase, effectiveSessionId, "tts", 20);
+    if (!allowed) {
+      return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait." }), {
+        status: 429,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -56,6 +101,17 @@ Deno.serve(async (req) => {
     }
 
     const result = await response.json();
+
+    // Log request
+    try {
+      await supabase.from("request_logs").insert({
+        session_id: effectiveSessionId,
+        function_name: "tts",
+        message_length: text.length,
+        response_time_ms: Date.now() - startTime,
+      });
+    } catch {}
+
     return new Response(JSON.stringify({ audio: result.audios?.[0] || "", request_id: result.request_id }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
