@@ -653,23 +653,40 @@
 
       var actions = extractActions(fullResponse);
       pendingNavigation = null;
-      productCards = [];
-      showProductGrid = false;
       
       // Collect open_product actions
       var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
       
+      // Determine if we had a grid showing before this response
+      var hadGrid = showProductGrid;
+      
       if (openProductActions.length > 1 && isShopifyPlatform) {
-        // Multiple products — build product cards for grid display
+        // Multiple products — build/refresh product cards for grid display
+        productCards = [];
         openProductActions.forEach(function (action) {
           var enriched = enrichAction(action);
           productCards.push(enriched);
         });
+        // Grid will be shown after TTS
       } else if (openProductActions.length === 1) {
         // Single product — navigate to product page after TTS
         var action = openProductActions[0];
         var handle = action.product_handle || extractHandle(action.product_link);
         pendingNavigation = handle ? "/products/" + handle : action.product_link;
+        showProductGrid = false;
+        productCards = [];
+      } else if (openProductActions.length === 0 && hadGrid) {
+        // No product actions in response — check if it's a cart/nav action
+        var hasNavAction = actions.some(function (a) {
+          return a.type === "navigate_to_checkout" || a.type === "navigate_to_cart";
+        });
+        var hasCartAction = actions.some(function (a) { return a.type === "add_to_cart"; });
+        if (!hasNavAction && !hasCartAction) {
+          // Pure conversation, no product context — hide grid
+          showProductGrid = false;
+          productCards = [];
+        }
+        // If add_to_cart or nav, keep grid visible (will update cards in-place)
       }
       
       // Handle other actions
@@ -677,13 +694,22 @@
         if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
             var enriched = enrichAction(action);
+            var handleToMark = enriched.handle;
             if (enriched.variantId) {
               shopifyAddToCart(enriched.variantId).then(function (ok) {
-                if (ok) inCartHandles[enriched.handle] = true;
+                if (ok) {
+                  inCartHandles[handleToMark] = true;
+                  showToast(enriched.name + " added to cart!");
+                  render(); // Re-render to update card state
+                }
               });
             } else {
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                console.log("Add to cart:", result.message);
+                if (result.success) {
+                  inCartHandles[handleToMark] = true;
+                  showToast(result.message);
+                  render();
+                }
               });
             }
           }
@@ -736,6 +762,8 @@
             if (productCards.length > 1) {
               showProductGrid = true;
               setVoiceState("idle", "");
+              // Auto-start listening so user can keep talking over the grid
+              setTimeout(startListening, 800);
               return;
             }
             setVoiceState("idle", "");
@@ -841,7 +869,7 @@
       var bodyHtml;
 
       if (showProductGrid && productCards.length > 1) {
-        // Product grid view
+        // Product grid view with persistent mic bar at bottom
         var cardsHtml = productCards.map(function (p, idx) {
           var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
           if (p.comparePrice && p.comparePrice > p.price) {
@@ -868,12 +896,29 @@
             </div>';
         }).join("");
 
+        // Compact mic bar for product grid view
+        var gridMicIcon = micIcon;
+        var gridMicClass = micClass;
+        var gridStatusText = statusText;
+        if (voiceState === "idle" && !isWelcomeLoading) {
+          gridStatusText = "Say a command...";
+        }
+        var gridWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
+
         bodyHtml = '\
           <div style="padding: 10px 12px 4px; display: flex; align-items: center; gap: 8px;">\
             <button class="aicw-cancel-btn aicw-back-btn" style="padding: 4px 12px;">← Back</button>\
             <span style="font-size: 13px; font-weight: 600; color: #374151;">Recommended for you</span>\
           </div>\
-          <div class="aicw-product-grid">' + cardsHtml + '</div>';
+          <div class="aicw-product-grid">' + cardsHtml + '</div>\
+          <div class="aicw-bottom-bar">\
+            <button class="aicw-mic-btn small ' + gridMicClass + '" aria-label="Toggle microphone">' + gridMicIcon + '</button>\
+            <div class="aicw-bar-info">\
+              <div class="aicw-bar-status">' + gridStatusText + '</div>\
+              ' + gridWaveformHtml + '\
+            </div>\
+            ' + ((voiceState === "processing" || voiceState === "speaking") ? '<button class="aicw-cancel-btn">Cancel</button>' : '') + '\
+          </div>';
       } else {
         bodyHtml = '\
           <div class="aicw-avatar-area">\
