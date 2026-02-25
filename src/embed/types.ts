@@ -18,6 +18,15 @@ export interface WidgetConfig {
   position?: "bottom-right" | "bottom-left";
   /** Z-index for the widget */
   zIndex?: number;
+  /** Platform detection — auto-detects Shopify if not specified */
+  platform?: "shopify" | "generic";
 }
 
 export type Msg = { role: "user" | "assistant"; content: string };
+
+/** Parsed action block from AI response */
+export interface ActionBlock {
+  type: "add_to_cart" | "open_product" | "navigate_to_checkout" | "navigate_to_cart";
+  product_name?: string;
+  product_link?: string;
+}

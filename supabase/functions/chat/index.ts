@@ -334,16 +334,29 @@ When the user says "show me more about X", "open X", "tell me about X product":
 :::action
 type: open_product
 product_name: Product Name
+product_link: https://store-link.com/products/handle
 :::
 
 When the user says "add X to cart", "buy X", "add it to cart":
 :::action
 type: add_to_cart
 product_name: Product Name
+product_link: https://store-link.com/products/handle
 :::
 
+When the user says "go to checkout", "checkout", "proceed to checkout":
+:::action
+type: navigate_to_checkout
+:::
+
+When the user says "open my cart", "show my cart", "go to cart":
+:::action
+type: navigate_to_cart
+:::
+
+- IMPORTANT: Always include product_link in add_to_cart and open_product actions. Use the product link from the catalog data.
 - When a user is viewing a product (message starts with "[The user is viewing the product"), answer about THAT product only.
-- If the user says "add this to cart" while viewing a product, use add_to_cart action with that product name.`;
+- If the user says "add this to cart" while viewing a product, use add_to_cart action with that product name and link.`;
 }
 
 // --- Main handler ---
