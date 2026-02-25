@@ -466,23 +466,41 @@
       setVoiceState("idle", "");
     }
 
+    function getSupportedMimeType() {
+      var types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4", ""];
+      for (var i = 0; i < types.length; i++) {
+        if (types[i] === "" || MediaRecorder.isTypeSupported(types[i])) return types[i];
+      }
+      return "";
+    }
+
     function startListening() {
       audioChunks = [];
       voiceTranscript = "";
+      console.log("[AI Widget] startListening called, voiceState:", voiceState);
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         micStream = stream;
         setVoiceState("listening", "Listening... speak now");
 
-        mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+        var mimeType = getSupportedMimeType();
+        console.log("[AI Widget] Using mimeType:", mimeType || "(default)");
+        var recorderOpts = mimeType ? { mimeType: mimeType } : undefined;
+        mediaRecorder = new MediaRecorder(stream, recorderOpts);
+        var recordingMimeType = mediaRecorder.mimeType || "audio/webm";
         mediaRecorder.ondataavailable = function (e) {
           if (e.data.size > 0) audioChunks.push(e.data);
         };
         mediaRecorder.onstop = function () {
-          if (voiceState !== "listening") return;
-          var blob = new Blob(audioChunks, { type: "audio/webm" });
+          console.log("[AI Widget] mediaRecorder.onstop, voiceState:", voiceState, "chunks:", audioChunks.length);
+          var blob = new Blob(audioChunks, { type: recordingMimeType });
+          if (blob.size < 500) {
+            console.log("[AI Widget] Audio too small, ignoring. Size:", blob.size);
+            setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
+            return;
+          }
           processAudio(blob);
         };
-        mediaRecorder.start();
+        mediaRecorder.start(250); // timeslice to ensure ondataavailable fires during recording
 
         audioContext = new AudioContext();
         var source = audioContext.createMediaStreamSource(stream);
@@ -502,7 +520,7 @@
           var now = Date.now();
           if (rms < 0.01) {
             if (vadSilenceStart === 0) vadSilenceStart = now;
-            else if (now - vadSilenceStart > 2000) { stopMic(); return; }
+            else if (now - vadSilenceStart > 2000) { console.log("[AI Widget] VAD silence detected, stopping mic"); stopMic(); return; }
           } else { vadSilenceStart = 0; }
           vadRafId = requestAnimationFrame(checkVAD);
         }
@@ -552,10 +570,12 @@
     }
 
     function processAudio(blob) {
+      console.log("[AI Widget] processAudio called, blob size:", blob.size, "type:", blob.type);
       setVoiceState("processing", "Processing...");
       var reader = new FileReader();
       reader.onloadend = function () {
         var base64 = reader.result.split(",")[1];
+        console.log("[AI Widget] Sending STT request, base64 length:", base64 ? base64.length : 0);
         fetch(sttUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
@@ -833,6 +853,8 @@
     }
 
     function onMicToggle() {
+      console.log("[AI Widget] onMicToggle, current voiceState:", voiceState, "isWelcomeLoading:", isWelcomeLoading);
+      if (isWelcomeLoading) return;
       if (voiceState === "idle") startListening();
       else if (voiceState === "listening") { stopMic(); setVoiceState("idle", ""); }
     }
