@@ -825,10 +825,8 @@
         setTimeout(startListening, 500);
         return;
       }
-      // Show product grid immediately (don't wait for TTS to finish)
-      if (productCards.length > 1) {
-        render();
-      }
+      // Don't show product grid yet — wait until TTS finishes speaking
+      // Products will appear when audio ends (see currentAudio.onended)
 
       setVoiceState("speaking", "Speaking...");
       render();
@@ -851,19 +849,21 @@
         currentAudio.onended = function () {
           currentAudio = null;
           if (voiceState === "speaking") {
-            if (pendingNavigation && isShopifyPlatform) {
-              window.location.href = pendingNavigation;
-              pendingNavigation = null;
-              return;
-            }
+            // Now show product grid after speaking is done
             if (productCards.length > 1) {
               showProductGrid = true;
-              setVoiceState("idle", "");
-              setTimeout(startListening, 800);
+              render();
+            }
+            if (pendingNavigation && isShopifyPlatform) {
+              // Small delay so user sees the product grid before navigating
+              setTimeout(function () {
+                window.location.href = pendingNavigation;
+                pendingNavigation = null;
+              }, productCards.length > 1 ? 2000 : 300);
               return;
             }
             setVoiceState("idle", "");
-            setTimeout(startListening, 500);
+            setTimeout(startListening, 800);
           }
         };
         currentAudio.onerror = function () {
