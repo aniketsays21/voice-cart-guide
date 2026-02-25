@@ -1,106 +1,87 @@
 
+Goal: make the Shopify experience match your expectation: opening “Bella Vita AI” should show the talking avatar flow, recommendations should come from your live Shopify catalog (not old data), and products should be shown using Shopify-native storefront UI instead of custom cards.
 
-# Bella Vita AI - Avatar Experience + Shopify Product Cards
+What I found from the current implementation:
+1. The avatar experience you approved exists in the app route `/chat` (React page), not in the Shopify embed script path.
+2. Shopify storefront is currently loading `public/ai-chat-widget.js`, which is a separate, older widget code path.
+3. Backend logs show `Shopify fetch failed: 401` and then `Fetched 0 products from Shopify`, so chat falls back to old database products (that is why you see old responses).
+4. Because of (2) and (3), you are seeing old behavior on Shopify even after publish.
 
-## Overview
+Implementation approach:
 
-Redesign the `/chat` page into an immersive AI assistant experience. When the user taps "Bella Vita AI" in the bottom nav, they land on a page with a talking avatar that greets them. Products only appear after the AI mentions them -- until then, the avatar is front and center.
+Phase 1: Fix data source so recommendations are truly from Shopify
+- Update chat backend function to stop relying on one hardcoded store URL only.
+- Pass the actual storefront domain from widget request (example: current Shopify hostname) and use that for catalog retrieval.
+- Handle 401 explicitly:
+  - If storefront is protected, use authenticated Shopify catalog access path (storefront token path) or return a clear fallback mode.
+- Keep existing database fallback only as last resort and only when Shopify is unavailable.
+- Add clear logging so we can confirm: selected store domain, fetch status, product count, fallback reason.
 
-## Key Changes
+Why this phase first:
+- Without fixing catalog retrieval, UI changes still show old/incorrect products.
 
-### 1. Talking Avatar Component (`src/components/assistant/TalkingAvatar.tsx`)
+Phase 2: Move Shopify to “native storefront display” mode (no custom product cards)
+- Update widget behavior so it does not render custom recommendation cards.
+- Keep AI as conversation + voice layer.
+- For product display, route user to Shopify-native pages:
+  - product pages (`/products/{handle}`),
+  - cart (`/cart`),
+  - checkout (`/checkout`),
+  - and searchable result pages (`/search?q=...&type=product`) for multi-product recommendations.
+- AI still recommends multiple products, but actual browsing is shown via native Shopify UI/components.
 
-A new animated avatar that serves as the visual presence of the AI:
+Why this matches your request:
+- Recommendations still come from AI.
+- Product browsing/presentation is Shopify-native, not custom widget cards.
 
-- Circular avatar with a pulsing glow effect when the AI is "speaking"
-- Animated mouth/wave visualization synced to TTS audio playback
-- Three states: **idle** (subtle breathing animation), **speaking** (active lip-sync pulse + glow), **listening** (shows the user's audio waveform instead)
-- Uses a placeholder avatar image (a stylized AI assistant icon) -- can be replaced with a real 3D model later
-- Greeting text displayed below: "Hi! I'm your Bella Vita assistant"
+Phase 3: Bring avatar experience into Shopify flow
+- Add an “avatar-first open state” in the Shopify widget flow:
+  - On opening Bella Vita AI, show talking model first.
+  - Auto-greet immediately.
+  - Keep voice agent behavior unchanged.
+  - Once assistant says it is showing best sellers, transition to Shopify-native result navigation (instead of custom cards).
+- Preserve current mic/listening/speaking loop.
 
-### 2. Redesigned Chat Page (`src/pages/Chat.tsx`)
+Phase 4: Fix delivery mismatch so Shopify always gets latest changes
+- Unify embed build path so Shopify script is generated from the current source of truth.
+- Ensure published script URL serves updated widget code.
+- Add cache-busting strategy for Shopify theme script include (version query) so old JS is not reused.
 
-Split into two visual phases:
+Planned file-level changes:
+1. `supabase/functions/chat/index.ts`
+   - dynamic store domain support,
+   - robust Shopify catalog fetch and 401 handling,
+   - safer fallback behavior and better logging.
+2. `src/embed/widget.ts`
+   - native Shopify display mode,
+   - avatar-first flow for Shopify,
+   - multi-product recommendation routing to Shopify-native pages.
+3. `src/embed/types.ts`
+   - config additions for native display mode / store domain.
+4. `src/embed/index.ts`
+   - pass/store new config values.
+5. `public/ai-chat-widget.js`
+   - regenerate/update to match latest embed source (to remove old production behavior).
 
-**Phase 1 - Avatar Mode (initial)**
-- Full-screen avatar centered on the page
-- AI auto-greets with TTS: "Hello! Welcome to Bella Vita. Let me show you our best selling products"
-- While greeting plays, avatar shows speaking animation
-- Voice button at the bottom for the user to respond
-- No products visible yet
+No database schema changes required:
+- This is mainly widget + backend-function behavior. Existing tables remain usable as fallback/logging.
 
-**Phase 2 - Products Mode (after AI responds with products)**
-- Avatar shrinks to a small floating circle at the top
-- Product grid appears below (Shopify-style cards)
-- Avatar still animates when AI speaks
-- Voice bar at the bottom for continued conversation
+Validation checklist (end-to-end):
+1. Open Shopify storefront and click Bella Vita AI.
+2. Confirm avatar greeting starts immediately.
+3. Ask for “top 5 perfumes under X budget”.
+4. Confirm AI recommendations are from current Shopify catalog (not old domain products).
+5. Confirm product browsing occurs on Shopify-native pages/cards.
+6. Confirm add-to-cart/cart/checkout actions work from AI flow.
+7. Confirm no stale script by testing after hard refresh and in incognito.
 
-The transition happens when the AI response contains `:::product` blocks.
+Risks and mitigations:
+- Risk: storefront protection causes 401.
+  - Mitigation: authenticated Shopify catalog path + explicit fallback messaging.
+- Risk: stale JS cache on Shopify.
+  - Mitigation: cache-busting script URL versioning.
+- Risk: mixed behavior between app `/chat` and Shopify widget.
+  - Mitigation: keep app chat unchanged, explicitly optimize Shopify embed path for this requirement.
 
-### 3. Shopify-Style Product Cards (`src/components/assistant/ShopifyProductCard.tsx`)
-
-A new product card component that exactly matches the Shopify collection page style used on the Index page:
-
-- Product image with aspect-square ratio
-- "Bestseller" badge (top-left, gold) for high-rated products
-- Discount percentage badge (bottom-left, green)
-- Category label (small uppercase text)
-- Product name (truncated)
-- Star rating with "Verified" badge
-- Price with strikethrough for discounted items
-- "Add to Cart" button (full-width, dark background, uppercase)
-- "In Cart" state with checkmark
-
-This matches the exact card layout already used in `Index.tsx` (lines 130-214), ensuring visual consistency.
-
-### 4. Updated ProductResults (`src/components/assistant/ProductResults.tsx`)
-
-- Replace the current product card rendering with the new `ShopifyProductCard` component
-- Keep the 2-column grid layout
-- Products fetched from Shopify will display with live prices and images
-
-### 5. Auto-Greeting Flow
-
-Current behavior: sends "Hi, show me top selling Bella Vita products" silently on mount.
-
-New behavior:
-1. Page opens -- avatar appears with idle animation
-2. After 500ms, AI greeting TTS plays: "Hello! Welcome to Bella Vita"
-3. Avatar shows speaking animation during TTS
-4. Simultaneously, the welcome API call fires to fetch products
-5. When products arrive AND TTS finishes, avatar shrinks up and products slide in from below
-6. Voice button activates for user interaction
-
-## Visual Layout
-
-```text
-Phase 1 (Greeting):                Phase 2 (Products):
-+------------------+               +------------------+
-|                  |               | [small avatar]   |
-|                  |               | "Results for..." |
-|    [AVATAR]      |               +------------------+
-|   (speaking)     |               | [card] | [card]  |
-|                  |               | [card] | [card]  |
-|  "Hello! I'm    |               | [card] | [card]  |
-|   your Bella     |               |                  |
-|   Vita asst."    |               +------------------+
-|                  |               | [mic] [waveform] |
-|    [MIC BTN]     |               +------------------+
-+------------------+
-```
-
-## Files
-
-| File | Change |
-|------|--------|
-| `src/components/assistant/TalkingAvatar.tsx` | **New** - Animated avatar component with idle/speaking/listening states |
-| `src/components/assistant/ShopifyProductCard.tsx` | **New** - Shopify-style product card matching Index.tsx design |
-| `src/pages/Chat.tsx` | **Modified** - Two-phase layout (avatar first, then products), auto-greeting with TTS |
-| `src/components/assistant/ProductResults.tsx` | **Modified** - Use ShopifyProductCard instead of inline card markup |
-
-## Technical Notes
-
-- The avatar is CSS-animated (no heavy 3D library needed). It uses radial gradients, scale transforms, and opacity transitions to simulate a speaking effect
-- TTS audio playback is detected via the `HTMLAudioElement.onplay` and `onended` events to toggle the avatar's speaking state
-- The phase transition (avatar to products) uses a CSS transition with `transform` and `opacity` for a smooth slide-up effect
-- Product data comes from Shopify via the existing chat edge function integration (already implemented)
+Expected outcome after implementation:
+- On Shopify, Bella Vita AI opens with avatar flow, answers with live Shopify catalog recommendations, and presents products through Shopify’s own native storefront UI rather than custom product cards.
