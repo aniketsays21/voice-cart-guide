@@ -784,23 +784,21 @@
           if (isShopifyPlatform && action.product_name) {
             var enriched = enrichAction(action);
             var handleToMark = enriched.handle;
+            var onAddSuccess = function () {
+              inCartHandles[handleToMark] = true;
+              showToast(enriched.name + " added to cart! ✓", true);
+              flashCard(handleToMark);
+              render();
+              // Navigate to cart page after adding product
+              pendingNavigation = "/cart";
+            };
             if (enriched.variantId) {
               shopifyAddToCart(enriched.variantId).then(function (ok) {
-                if (ok) {
-                  inCartHandles[handleToMark] = true;
-                  showToast(enriched.name + " added to cart! ✓", true);
-                  flashCard(handleToMark);
-                  render();
-                }
+                if (ok) onAddSuccess();
               });
             } else {
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                if (result.success) {
-                  inCartHandles[handleToMark] = true;
-                  showToast(enriched.name + " added to cart! ✓", true);
-                  flashCard(handleToMark);
-                  render();
-                }
+                if (result.success) onAddSuccess();
               });
             }
           }
