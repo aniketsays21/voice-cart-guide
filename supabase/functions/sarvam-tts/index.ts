@@ -30,10 +30,10 @@ async function checkRateLimit(supabase: any, sessionId: string, functionName: st
 }
 
 // Select ElevenLabs voice based on language
+// Using "River" (SAz9YHcvj6GT2YYXdXww) - warm, friendly tone that works well
+// with Hinglish/Indian English on multilingual v2
 function selectVoice(langCode: string): string {
-  // Hindi-friendly multilingual voices
-  if (langCode === "hi-IN") return "pFZP5JQG7iQjIQuC4Bku"; // Lily - better Hindi pronunciation
-  return "pFZP5JQG7iQjIQuC4Bku"; // Lily - great for Hinglish with multilingual v2
+  return "SAz9YHcvj6GT2YYXdXww"; // River - natural Indian-friendly voice
 }
 
 Deno.serve(async (req) => {
@@ -100,11 +100,11 @@ Deno.serve(async (req) => {
           text: truncatedText,
           model_id: "eleven_multilingual_v2",
           voice_settings: {
-            stability: 0.4,
-            similarity_boost: 0.8,
-            style: 0.4,
+            stability: 0.35,
+            similarity_boost: 0.85,
+            style: 0.6,
             use_speaker_boost: true,
-            speed: 0.95,
+            speed: 1.0,
           },
         }),
       }
