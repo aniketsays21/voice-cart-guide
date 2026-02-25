@@ -410,10 +410,29 @@ function formatCatalog(catalogProducts: any[]): string {
 }
 
 // --- System prompt ---
-function buildSystemPrompt(searchContext: string, nativeDisplay: boolean, storeDomain: string): string {
+function buildSystemPrompt(searchContext: string, nativeDisplay: boolean, storeDomain: string, pageContext?: { pageType: string; productHandle?: string; url?: string }): string {
+  // Add page-aware context
+  let pageContextText = "";
+  if (pageContext) {
+    switch (pageContext.pageType) {
+      case "product":
+        pageContextText = `\nCURRENT PAGE CONTEXT: The user is currently on a PRODUCT page (${pageContext.productHandle || "unknown"}). Help them with this specific product — answer questions about it, offer to add it to cart, or suggest related products.`;
+        break;
+      case "cart":
+        pageContextText = `\nCURRENT PAGE CONTEXT: The user is on the CART page. Help them review their cart, suggest add-ons, or guide them to checkout.`;
+        break;
+      case "checkout":
+        pageContextText = `\nCURRENT PAGE CONTEXT: The user is on the CHECKOUT page. Help them complete their purchase, answer questions about shipping, payment, or order details.`;
+        break;
+      case "collection":
+        pageContextText = `\nCURRENT PAGE CONTEXT: The user is browsing a COLLECTION page. Help them find the best products from this collection.`;
+        break;
+    }
+  }
+
   const basePrompt = `Tum ek friendly Indian shopping assistant ho Bella Vita ke liye. Hamesha Hinglish mein baat karo, jaise ek dost se baat kar rahe ho. Mix Hindi and English naturally, for example: "Ye perfume bohot popular hai, long-lasting fragrance hai aur price bhi quite affordable hai."
 Use Roman Hindi script, NOT Devanagari. Write Hindi words in English letters always.
-Keep sentences short and conversational because your responses will be spoken aloud via voice.
+Keep sentences short and conversational because your responses will be spoken aloud via voice.${pageContextText}
 
 WELCOME BEHAVIOR:
 - If the user's first message is a greeting or asks for top products, respond with a warm welcome: "Hello! Main aapka shopping assistant hoon. Bella Vita store par aapka swagat hai! Batao kya dhundh rahe ho, ye rahe hamare kuch best selling products aapke liye" and then show the top 4-6 bestselling products sorted by rating.
@@ -594,7 +613,7 @@ serve(async (req) => {
       });
     }
 
-    const { messages, sessionId, conversationId, storeDomain, clientProducts, nativeDisplay } = body;
+    const { messages, sessionId, conversationId, storeDomain, clientProducts, nativeDisplay, pageContext } = body;
     const effectiveSessionId = sessionId || crypto.randomUUID();
 
     const sanitizedMessages = messages.map((m: any) => ({
@@ -641,7 +660,7 @@ serve(async (req) => {
     ].filter(Boolean).join(" | ");
 
     const isNativeDisplay = nativeDisplay === true;
-    const systemPrompt = buildSystemPrompt(searchContext, isNativeDisplay, storeDomain || "");
+    const systemPrompt = buildSystemPrompt(searchContext, isNativeDisplay, storeDomain || "", pageContext);
     const productDataMessage = {
       role: "system",
       content: `PRODUCT CATALOG DATA:\n${productCatalog || "No products match the current filters."}`,
