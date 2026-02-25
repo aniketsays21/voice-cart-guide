@@ -1,103 +1,79 @@
 
 
-# Voice Agent Mode for Shopify Widget
+# Voice-Only Widget for Shopify
 
-## What You'll Get
-A new **Voice tab** inside the existing chat widget on Shopify. Customers tap a microphone button, speak naturally, and the assistant **responds with voice** while showing matching products as visual cards. No typing, no reading -- just talk and shop.
+## What Changes
 
-```text
-+------------------------------------------+
-|  Shopping Assistant              [X]     |
-|  [ Chat ]  [ Voice ]                     |
-|------------------------------------------|
-|                                          |
-|   [Product Card]  [Product Card]         |
-|   [Product Card]  [Product Card]         |
-|                                          |
-|        "Here are some perfumes           |
-|         under 500 rupees..."             |
-|              (spoken aloud)              |
-|                                          |
-|         Status: Listening...             |
-|                                          |
-|          ~~~~ waveform ~~~~              |
-|                                          |
-|            [ MIC BUTTON ]                |
-+------------------------------------------+
+The widget will become a **voice-first experience**. No more chat tab — when customers (or any Shopify button) opens the widget, they go straight to the voice assistant.
+
+## Changes Overview
+
+### 1. Remove Chat Tab and Chat Mode
+
+- Remove the tab bar entirely (no "Chat" / "Voice" toggle)
+- Remove the `renderChatMode` function and related chat UI (textarea, send button, message list)
+- The widget opens directly into voice mode
+- Chat-related state variables (`messages`, `isLoading`, `input`) and the `send()` function for text chat will be removed
+
+### 2. Change the Floating Button to a Microphone
+
+- Replace the chat bubble icon on the FAB (floating action button) with a **microphone icon**
+- Optionally add a small label or tooltip: "Talk to us"
+
+### 3. Expose a Global API for External Buttons
+
+The widget already exposes `window.AIChatWidget.open()`. This will continue to work, so any Shopify button can trigger it.
+
+You'll add a simple `onclick` to any button in your Shopify theme:
+
+```html
+<button onclick="window.AIChatWidget.open()">
+  Talk to Assistant
+</button>
 ```
 
-## How It Works (User Flow)
-1. Customer opens widget and taps the **Voice** tab
-2. Taps the large **microphone button** to start speaking
-3. A waveform animation shows active listening
-4. When they stop talking (silence detection), the audio is sent for processing
-5. The AI responds with **spoken audio** (plays automatically)
-6. Any product recommendations appear as **visual cards** in the display area
-7. The mic automatically restarts to listen for follow-up questions
-8. Customer taps the mic button again to stop the session
+This works with any HTML element — a banner button, a navigation link, a product page CTA, etc.
 
-## Changes Required
+### 4. Header Update
 
-### 1. Update `public/ai-chat-widget.js` (Main Change)
-
-Add the entire voice mode to the self-contained widget bundle:
-
-- **Two tabs in the header**: "Chat" and "Voice" toggle buttons
-- **Voice UI**: Large circular mic button with pulsing animation, status text (Idle / Listening / Processing / Speaking), waveform canvas visualization, and a product results grid
-- **Audio recording**: Use `MediaRecorder` API to capture microphone audio as WebM
-- **Silence detection (VAD)**: Use Web Audio API + AnalyserNode to detect when the user stops talking (2 seconds of silence), then auto-submit
-- **STT call**: Send recorded audio (base64) to the existing `sarvam-stt` edge function
-- **Chat call**: Send transcript to the existing `chat` edge function (collect full response, not streaming, so we can extract text for TTS)
-- **Product parsing**: Extract `:::product` blocks from AI response and render as visual cards
-- **TTS call**: Strip markdown/special chars from the text portion of the response, send to the existing `sarvam-tts` edge function
-- **Audio playback**: Play the returned base64 audio via `Audio` API
-- **Auto-restart**: After playback ends, restart the microphone to listen for follow-up queries
-- **Cancel button**: Allow user to interrupt at any point during processing/speaking
-
-### 2. Update `public/embed-demo.html`
-
-No changes needed -- the demo already loads `ai-chat-widget.js` and will automatically get the voice tab.
-
-### 3. No Backend Changes Needed
-
-All three edge functions already exist and work:
-- `sarvam-stt` -- speech to text (Sarvam saaras:v3)
-- `sarvam-tts` -- text to speech (Sarvam bulbul:v2)
-- `chat` -- AI reasoning with product catalog (Gemini)
+- Header will show the mic icon instead of chat icon
+- Title stays configurable (e.g., "Voice Assistant")
 
 ## Technical Details
 
-### Voice Mode State Machine
-```text
-IDLE --> LISTENING --> PROCESSING --> SPEAKING --> IDLE
-  ^                       |              |
-  |                       v              v
-  +---- (cancel) --------+-- (cancel) --+
+### File: `public/ai-chat-widget.js`
+
+**Remove:**
+- `activeTab` variable and all tab-switching logic
+- `renderChatMode()` function (~45 lines)
+- Tab HTML generation and tab click handlers
+- Text chat `send()` function and related streaming logic (~80 lines)
+- Chat-related state: `messages`, `isLoading` arrays
+
+**Modify:**
+- FAB button: change icon from `ICONS.chat` to `ICONS.mic`, add "Talk to us" label
+- `render()` function: when open, go directly to `renderVoiceMode()` without tabs
+- `renderVoiceMode()`: remove `tabsHtml` parameter since no tabs exist
+- Header icon: use `ICONS.mic` instead of `ICONS.chat`
+- Keep all voice state, STT, TTS, product display, and Shopify action logic intact
+
+**Keep:**
+- `window.AIChatWidget` API (`open`, `close`, `destroy`) — already works for external buttons
+- All voice mode logic (recording, VAD, STT, Chat API, TTS, product cards)
+- Shadow DOM, styles, auto-init
+
+### Shopify Integration
+
+On your Shopify theme, you can add a button anywhere (header, banner, product page) like:
+
+```html
+<button class="voice-assistant-btn" onclick="window.AIChatWidget.open()">
+  Ask our Voice Assistant
+</button>
 ```
 
-### Chat API Usage (Non-Streaming for Voice)
-For voice mode, the chat API will be called without streaming so the full response text can be:
-1. Parsed for product cards (displayed visually)
-2. Cleaned of markdown/emojis/special chars
-3. Sent to TTS for voice output
+The floating mic button will still be there as a fallback, but any custom button can also trigger the same panel.
 
-The existing streaming endpoint will still be used for the Chat tab.
+### Estimated Change
 
-### New CSS Classes Added to Widget Styles
-- `.aicw-tabs` -- Tab bar for Chat/Voice toggle
-- `.aicw-voice-area` -- Main voice mode container
-- `.aicw-mic-btn` -- Large circular microphone button with pulse animation
-- `.aicw-waveform` -- Canvas element for audio visualization
-- `.aicw-voice-status` -- Status text display
-- `.aicw-voice-products` -- Product cards grid in voice mode
-
-### Text Cleaning for TTS
-Before sending to TTS, the AI response text is filtered to remove:
-- `:::product` and `:::action` blocks (visual only)
-- Markdown symbols (`**`, `*`, `#`, etc.)
-- Emojis and special characters
-- Keeps only natural spoken text with commas and periods
-
-### Widget Size
-The `public/ai-chat-widget.js` file will grow from ~565 lines to approximately ~900 lines. Still a single self-contained file with no dependencies.
-
+The file will shrink from ~1128 lines to ~900 lines by removing chat-only code. The voice experience remains identical — mic button, waveform, silence detection, product cards, and auto-restart.
