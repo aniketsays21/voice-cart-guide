@@ -350,8 +350,43 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
+  var STORAGE_KEY = "aicw_session";
+
   function generateSessionId() {
     return "session_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
+  }
+
+  function saveSession(data) {
+    try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) {}
+  }
+
+  function loadSession() {
+    try {
+      var raw = sessionStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function clearSession() {
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
+
+  function detectPageContext() {
+    var path = window.location.pathname;
+    if (path.indexOf("/products/") !== -1) {
+      var handle = path.split("/products/")[1].split("?")[0].split("#")[0].replace(/\/$/, "");
+      return { pageType: "product", productHandle: handle, url: window.location.href };
+    }
+    if (path === "/cart" || path.indexOf("/cart") === 0) {
+      return { pageType: "cart", url: window.location.href };
+    }
+    if (path.indexOf("/checkout") !== -1) {
+      return { pageType: "checkout", url: window.location.href };
+    }
+    if (path.indexOf("/collections/") !== -1) {
+      return { pageType: "collection", url: window.location.href };
+    }
+    return { pageType: "browse", url: window.location.href };
   }
 
   // Extract action blocks from AI response
@@ -399,15 +434,17 @@
     var chatUrl = apiUrl + "/functions/v1/chat";
     var sttUrl = apiUrl + "/functions/v1/sarvam-stt";
     var ttsUrl = apiUrl + "/functions/v1/sarvam-tts";
-    var sessionId = generateSessionId();
-    var conversationId = null;
-    var isOpen = false;
+    // Restore session state from sessionStorage (survives Shopify page navigations)
+    var savedSession = loadSession();
+    var sessionId = (savedSession && savedSession.sessionId) || generateSessionId();
+    var conversationId = (savedSession && savedSession.conversationId) || null;
+    var isOpen = (savedSession && savedSession.isOpen) || false;
     var pendingActions = [];
     var shopifyCatalog = [];
-    var inCartHandles = {};
+    var inCartHandles = (savedSession && savedSession.inCartHandles) || {};
     var pendingNavigation = null;
-    var productCards = [];
-    var showProductGrid = false;
+    var productCards = (savedSession && savedSession.productCards) || [];
+    var showProductGrid = (savedSession && savedSession.showProductGrid) || false;
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -421,10 +458,24 @@
     var vadRafId = 0;
     var vadSilenceStart = 0;
     var currentAudio = null;
-    var voiceMessages = [];
+    var voiceMessages = (savedSession && savedSession.voiceMessages) || [];
     var waveformRafId = 0;
-    var welcomeTriggered = false;
+    var welcomeTriggered = (savedSession && savedSession.welcomeTriggered) || false;
     var isWelcomeLoading = false;
+
+    // Persist state after each meaningful change
+    function persistState() {
+      saveSession({
+        sessionId: sessionId,
+        conversationId: conversationId,
+        isOpen: isOpen,
+        voiceMessages: voiceMessages,
+        productCards: productCards,
+        showProductGrid: showProductGrid,
+        inCartHandles: inCartHandles,
+        welcomeTriggered: welcomeTriggered
+      });
+    }
 
     // Fetch catalog on init if Shopify
     if (isShopifyPlatform) {
@@ -683,6 +734,8 @@
     }
 
     function sendToChat(query) {
+      persistState();
+      var pageContext = detectPageContext();
       var requestBody = {
         messages: voiceMessages.map(function (m) { return { role: m.role, content: m.content }; }),
         sessionId: sessionId,
@@ -690,7 +743,8 @@
         storeId: storeId,
         nativeDisplay: isShopifyPlatform,
         storeDomain: isShopifyPlatform ? window.location.origin : undefined,
-        clientProducts: shopifyCatalog.length > 0 ? shopifyCatalog : undefined
+        clientProducts: shopifyCatalog.length > 0 ? shopifyCatalog : undefined,
+        pageContext: pageContext
       };
 
       fetch(chatUrl, {
@@ -699,7 +753,7 @@
         body: JSON.stringify(requestBody)
       }).then(function (resp) {
         var convIdHeader = resp.headers.get("X-Conversation-Id");
-        if (convIdHeader && !conversationId) conversationId = convIdHeader;
+        if (convIdHeader && !conversationId) { conversationId = convIdHeader; persistState(); }
 
         if (!resp.ok) {
           return resp.json().catch(function () { return {}; }).then(function (err) {
@@ -792,6 +846,7 @@
     function onChatComplete(fullResponse, query) {
       console.log("[AI Widget] onChatComplete called, response length:", fullResponse.length);
       voiceMessages.push({ role: "assistant", content: fullResponse });
+      persistState();
 
       var actions = extractActions(fullResponse);
       console.log("[AI Widget] Extracted actions:", actions.length, JSON.stringify(actions.map(function(a){ return a.type; })));
@@ -807,6 +862,7 @@
           productCards.push(enriched);
         });
         showProductGrid = true;
+        persistState();
       } else if (openProductActions.length === 1) {
         var action = openProductActions[0];
         var handle = action.product_handle || extractHandle(action.product_link);
@@ -900,7 +956,8 @@
               render();
             }
             if (pendingNavigation && isShopifyPlatform) {
-              // Small delay so user sees the product grid before navigating
+              // Save state before navigating so widget resumes on next page
+              persistState();
               setTimeout(function () {
                 window.location.href = pendingNavigation;
                 pendingNavigation = null;
@@ -943,6 +1000,7 @@
       welcomeTriggered = true;
       isWelcomeLoading = true;
       pendingNavigation = null;
+      persistState();
       render();
 
       var welcomeQuery = "Hi, welcome me to Bella Vita store and show me top selling products";
@@ -961,6 +1019,7 @@
       voiceTranscript = "";
       conversationId = null;
       isOpen = false;
+      clearSession();
       render();
     }
 
@@ -1188,16 +1247,29 @@
       if (voiceState === "listening" && analyserNode) startWaveform();
     }
 
-    render();
+    // Auto-restore: if widget was open on previous page, resume
+    if (isOpen && savedSession) {
+      console.log("[AI Widget] Restoring session from previous page, page:", detectPageContext().pageType);
+      render();
+      // If we have conversation history, start listening directly (no welcome)
+      if (voiceMessages.length > 0) {
+        setTimeout(startListening, 500);
+      } else {
+        triggerWelcome();
+      }
+    } else {
+      render();
+    }
 
     return {
       open: function () {
         isOpen = true;
+        persistState();
         render();
         triggerWelcome();
       },
       close: function () { closeWidget(); },
-      destroy: function () { cancelVoice(); host.remove(); }
+      destroy: function () { cancelVoice(); clearSession(); host.remove(); }
     };
   }
 
