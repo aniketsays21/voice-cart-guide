@@ -6,6 +6,7 @@ import VoiceButton from "@/components/assistant/VoiceButton";
 import AudioWaveform from "@/components/assistant/AudioWaveform";
 import ProductResults, { type AssistantProduct, type ResultGroup } from "@/components/assistant/ProductResults";
 import ProductDetailSheet from "@/components/assistant/ProductDetailSheet";
+import TalkingAvatar from "@/components/assistant/TalkingAvatar";
 import { useVAD } from "@/hooks/useVAD";
 import { toast } from "sonner";
 
@@ -102,25 +103,65 @@ const Chat: React.FC = () => {
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const shouldRestartRef = useRef(false);
 
-  // TTS
-  const playTTS = useCallback(async (text: string) => {
+  // Avatar state
+  const [avatarState, setAvatarState] = useState<"idle" | "speaking" | "listening">("idle");
+  const [showProducts, setShowProducts] = useState(false);
+  const pendingProductsRef = useRef<boolean>(false);
+
+  // TTS with avatar sync
+  const playTTS = useCallback(async (text: string): Promise<void> => {
     if (!voiceEnabled || !text.trim()) return;
     try {
       const clean = cleanForTTS(text);
       if (!clean) return;
       const hasHindi = /[\u0900-\u097F]/.test(clean);
+      setAvatarState("speaking");
       const resp = await fetch(TTS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
         body: JSON.stringify({ text: clean, target_language_code: hasHindi ? "hi-IN" : "en-IN" }),
       });
-      if (!resp.ok) return;
+      if (!resp.ok) { setAvatarState("idle"); return; }
       const data = await resp.json();
-      if (!data.audio) return;
+      if (!data.audio) { setAvatarState("idle"); return; }
       const audio = new Audio(`data:audio/wav;base64,${data.audio}`);
       audioRef.current = audio;
-      await audio.play();
-    } catch (e) { console.error("TTS error:", e); }
+      
+      return new Promise<void>((resolve) => {
+        audio.onended = () => {
+          setAvatarState("idle");
+          // If products are pending, show them now
+          if (pendingProductsRef.current) {
+            pendingProductsRef.current = false;
+            setShowProducts(true);
+          }
+          resolve();
+        };
+        audio.onerror = () => {
+          setAvatarState("idle");
+          if (pendingProductsRef.current) {
+            pendingProductsRef.current = false;
+            setShowProducts(true);
+          }
+          resolve();
+        };
+        audio.play().catch(() => {
+          setAvatarState("idle");
+          if (pendingProductsRef.current) {
+            pendingProductsRef.current = false;
+            setShowProducts(true);
+          }
+          resolve();
+        });
+      });
+    } catch (e) {
+      console.error("TTS error:", e);
+      setAvatarState("idle");
+      if (pendingProductsRef.current) {
+        pendingProductsRef.current = false;
+        setShowProducts(true);
+      }
+    }
   }, [voiceEnabled]);
 
   // Handle AI actions
@@ -215,7 +256,20 @@ const Chat: React.FC = () => {
       setState("results");
 
       if (actions.length > 0) handleActions(actions, parsed);
-      if (commentary) playTTS(commentary);
+      
+      // If there are products, mark them pending and show after TTS
+      if (parsed.length > 0) {
+        pendingProductsRef.current = true;
+        if (commentary) {
+          await playTTS(commentary);
+        } else {
+          pendingProductsRef.current = false;
+          setShowProducts(true);
+        }
+      } else {
+        setShowProducts(true);
+        if (commentary) playTTS(commentary);
+      }
 
       // Auto-restart listening if continuous mode is on
       if (shouldRestartRef.current) {
@@ -245,7 +299,7 @@ const Chat: React.FC = () => {
   const vad = useVAD(doStopRecording, 2500, 0.015);
   vadStopRef.current = vad.stop;
 
-  // Internal start recording (doesn't set continuous mode)
+  // Internal start recording
   const startRecordingInternal = useCallback(async () => {
     try {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
@@ -253,6 +307,7 @@ const Chat: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       setActiveStream(stream);
+      setAvatarState("listening");
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -262,11 +317,10 @@ const Chat: React.FC = () => {
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         setActiveStream(null);
+        setAvatarState("idle");
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         
-        // Check if there's actual audio content
         if (audioBlob.size < 1000) {
-          // Too small, probably silence - restart if continuous
           if (shouldRestartRef.current) {
             setTimeout(() => startRecordingInternal(), 300);
           }
@@ -292,7 +346,6 @@ const Chat: React.FC = () => {
               return;
             }
           }
-          // No transcript - restart if continuous
           setState(resultGroups.length > 0 ? "results" : "idle");
           if (shouldRestartRef.current) {
             setTimeout(() => startRecordingInternal(), 300);
@@ -311,17 +364,16 @@ const Chat: React.FC = () => {
     } catch (e) { console.error("Mic access error:", e); }
   }, [send, resultGroups.length, vad]);
 
-  // Public start - enables continuous mode
   const startRecording = useCallback(() => {
     shouldRestartRef.current = true;
     setContinuousListening(true);
     startRecordingInternal();
   }, [startRecordingInternal]);
 
-  // Full stop - disables continuous mode
   const stopEverything = useCallback(() => {
     shouldRestartRef.current = false;
     setContinuousListening(false);
+    setAvatarState("idle");
     doStopRecording();
     setState(resultGroups.length > 0 ? "results" : "idle");
   }, [doStopRecording, resultGroups.length]);
@@ -334,12 +386,15 @@ const Chat: React.FC = () => {
   const [isWelcomeLoading, setIsWelcomeLoading] = useState(true);
   const welcomeSentRef = useRef(false);
 
-  // Auto-trigger welcome message on mount
+  // Auto-trigger welcome with greeting TTS first, then products
   useEffect(() => {
     if (welcomeSentRef.current) return;
     welcomeSentRef.current = true;
-    
+
     const triggerWelcome = async () => {
+      // Play greeting TTS while fetching products
+      const greetingPromise = playTTS("Hello! Welcome to Bella Vita. Let me show you our best selling products.");
+
       const welcomePrompt = "Hi, show me top selling Bella Vita products";
       setLastQuery(welcomePrompt);
       setState("searching");
@@ -396,24 +451,28 @@ const Chat: React.FC = () => {
         setIsWelcomeLoading(false);
 
         if (actions.length > 0) handleActions(actions, parsed);
-        if (commentary) playTTS(commentary);
+
+        // Wait for greeting TTS to finish before showing products
+        await greetingPromise;
+        setShowProducts(true);
       } catch (e) {
         console.error("Welcome message error:", e);
         setState("idle");
         setIsWelcomeLoading(false);
+        setShowProducts(true);
       }
     };
 
     triggerWelcome();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const showHero = state === "idle" && resultGroups.length === 0 && !isWelcomeLoading;
   const hasResults = resultGroups.length > 0;
   const isProcessing = state === "transcribing" || state === "searching";
+  const isAvatarPhase = !showProducts;
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Minimal header - icons only */}
+      {/* Minimal header */}
       <div className="flex items-center justify-end px-4 py-2 bg-background">
         <div className="flex items-center gap-1">
           <button onClick={toggleVoice} className="h-8 w-8 rounded-full hover:bg-secondary flex items-center justify-center transition-colors">
@@ -429,58 +488,67 @@ const Chat: React.FC = () => {
       </div>
       <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
 
-      {/* Welcome loading state */}
-      {isWelcomeLoading && !hasResults && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
-          <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-          <div className="text-center">
-            <h2 className="text-lg font-semibold text-foreground">Welcome to Bella Vita</h2>
-            <p className="text-sm text-muted-foreground mt-1">Connecting to your shopping assistant...</p>
-          </div>
-        </div>
-      )}
+      {/* ===== PHASE 1: Avatar Mode ===== */}
+      {isAvatarPhase && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6 transition-all duration-500">
+          <TalkingAvatar state={avatarState} size="large" />
 
-      {/* HERO: idle with no results, not listening */}
-      {showHero && !continuousListening && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <VoiceButton isListening={false} onToggle={startRecording} />
-        </div>
-      )}
+          {isWelcomeLoading && (
+            <div className="flex items-center gap-2 mt-4">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">Finding products for you...</span>
+            </div>
+          )}
 
-      {/* Active listening/processing with no results yet */}
-      {!hasResults && continuousListening && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
-          {state === "listening" ? (
-            <>
-              <VoiceButton isListening={true} onToggle={stopEverything} />
-              <AudioWaveform stream={activeStream} isActive={true} barCount={32} className="max-w-[240px] mx-auto" />
-            </>
-          ) : isProcessing ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center">
-                <Loader2 className="h-10 w-10 animate-spin text-primary" />
-              </div>
-              <p className="text-sm font-medium text-muted-foreground">
-                {state === "transcribing" ? "Processing your voice..." : "Finding products for you..."}
+          {/* Mic button in avatar phase */}
+          {!isWelcomeLoading && !isProcessing && avatarState !== "speaking" && (
+            <div className="mt-4">
+              <VoiceButton
+                isListening={continuousListening && state === "listening"}
+                onToggle={continuousListening ? stopEverything : startRecording}
+              />
+            </div>
+          )}
+
+          {/* Waveform when listening */}
+          {state === "listening" && activeStream && (
+            <AudioWaveform stream={activeStream} isActive={true} barCount={32} className="max-w-[240px] mx-auto" />
+          )}
+
+          {isProcessing && (
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">
+                {state === "transcribing" ? "Processing your voice..." : "Finding products..."}
               </p>
               <button onClick={stopEverything} className="text-xs text-muted-foreground underline hover:text-foreground transition-colors">
                 Cancel
               </button>
             </div>
-          ) : (
-            <VoiceButton isListening={false} onToggle={startRecording} />
           )}
         </div>
       )}
 
-      {/* Results view */}
-      {hasResults && (
+      {/* ===== PHASE 2: Products Mode ===== */}
+      {showProducts && hasResults && (
         <>
-          <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
-          
-          {/* Compact bottom bar with mic + waveform */}
+          {/* Small avatar at top */}
+          <div className="flex items-center gap-3 px-4 py-2 border-b border-border animate-fade-in">
+            <TalkingAvatar state={avatarState} size="small" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-muted-foreground">Bella Vita AI</p>
+              <p className="text-sm font-medium text-foreground truncate">
+                {avatarState === "speaking" ? "Speaking..." : "Here are your results"}
+              </p>
+            </div>
+          </div>
+
+          {/* Product grid */}
+          <div className="animate-fade-in">
+            <ProductResults resultGroups={resultGroups} onProductClick={setSelectedProduct} />
+          </div>
+
+          {/* Compact bottom bar */}
           <div className="border-t border-border bg-background mb-16 px-4 py-2 flex items-center gap-3">
             <VoiceButton
               isListening={continuousListening}
