@@ -327,6 +327,8 @@
     var shopifyCatalog = []; // client-fetched products
     var inCartHandles = {}; // track handles added to cart
     var pendingNavigation = null; // URL to navigate to after TTS
+    var productCards = []; // enriched product cards for multi-product display
+    var showProductGrid = false; // whether to show product grid view
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -651,14 +653,28 @@
 
       var actions = extractActions(fullResponse);
       pendingNavigation = null;
+      productCards = [];
+      showProductGrid = false;
       
+      // Collect open_product actions
+      var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
+      
+      if (openProductActions.length > 1 && isShopifyPlatform) {
+        // Multiple products — build product cards for grid display
+        openProductActions.forEach(function (action) {
+          var enriched = enrichAction(action);
+          productCards.push(enriched);
+        });
+      } else if (openProductActions.length === 1) {
+        // Single product — navigate to product page after TTS
+        var action = openProductActions[0];
+        var handle = action.product_handle || extractHandle(action.product_link);
+        pendingNavigation = handle ? "/products/" + handle : action.product_link;
+      }
+      
+      // Handle other actions
       actions.forEach(function (action) {
-        if (action.type === "navigate_to_search" && action.search_query) {
-          pendingNavigation = "/search?q=" + encodeURIComponent(action.search_query) + "&type=product";
-        } else if (action.type === "open_product" && action.product_link) {
-          var handle = action.product_handle || extractHandle(action.product_link);
-          pendingNavigation = handle ? "/products/" + handle : action.product_link;
-        } else if (action.type === "add_to_cart") {
+        if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
             var enriched = enrichAction(action);
             if (enriched.variantId) {
@@ -717,6 +733,11 @@
               pendingNavigation = null;
               return;
             }
+            if (productCards.length > 1) {
+              showProductGrid = true;
+              setVoiceState("idle", "");
+              return;
+            }
             setVoiceState("idle", "");
             setTimeout(startListening, 500);
           }
@@ -754,6 +775,17 @@
       var welcomeQuery = "Hi, show me top selling Bella Vita products";
       voiceMessages.push({ role: "user", content: welcomeQuery });
       sendToChat(welcomeQuery);
+    }
+
+    function showToast(msg) {
+      var existing = shadow.querySelector(".aicw-toast");
+      if (existing) existing.remove();
+      var t = document.createElement("div");
+      t.className = "aicw-toast";
+      t.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' + msg;
+      root.appendChild(t);
+      setTimeout(function () { t.classList.add("aicw-toast-out"); }, 2000);
+      setTimeout(function () { t.remove(); }, 2500);
     }
 
     // ── Render ────────────────────────────────────────────────────
@@ -806,17 +838,55 @@
         ? '<button class="aicw-cancel-btn">Cancel</button>'
         : '';
 
-      var bodyHtml = '\
-        <div class="aicw-avatar-area">\
-          <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
-          <div class="aicw-avatar-status">' + statusText + '</div>\
-          <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
-          ' + transcriptHtml + navHtml + '\
-          <div style="margin-top: 24px;">\
-            <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+      var bodyHtml;
+
+      if (showProductGrid && productCards.length > 1) {
+        // Product grid view
+        var cardsHtml = productCards.map(function (p, idx) {
+          var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
+          if (p.comparePrice && p.comparePrice > p.price) {
+            priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span><span class="aicw-pcard-old">₹' + p.comparePrice + '</span>';
+          }
+          var discountBadge = '';
+          if (p.comparePrice && p.comparePrice > p.price) {
+            var pct = Math.round(((p.comparePrice - p.price) / p.comparePrice) * 100);
+            discountBadge = '<span class="aicw-pcard-badge">' + pct + '% OFF</span>';
+          }
+          var atcClass = inCartHandles[p.handle] ? 'aicw-pcard-atc in-cart' : 'aicw-pcard-atc';
+          var atcText = inCartHandles[p.handle] ? '✓ In Cart' : 'Add to Cart';
+          return '\
+            <div class="aicw-pcard" data-idx="' + idx + '">\
+              <div class="aicw-pcard-img-wrap">\
+                ' + (p.image ? '<img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" />' : '') + '\
+                ' + discountBadge + '\
+              </div>\
+              <div class="aicw-pcard-body">\
+                <div class="aicw-pcard-name">' + p.name + '</div>\
+                <div>' + priceHtml + '</div>\
+                <button class="' + atcClass + '" data-atc="' + idx + '">' + atcText + '</button>\
+              </div>\
+            </div>';
+        }).join("");
+
+        bodyHtml = '\
+          <div style="padding: 10px 12px 4px; display: flex; align-items: center; gap: 8px;">\
+            <button class="aicw-cancel-btn aicw-back-btn" style="padding: 4px 12px;">← Back</button>\
+            <span style="font-size: 13px; font-weight: 600; color: #374151;">Recommended for you</span>\
           </div>\
-          ' + (cancelBtn ? '<div style="margin-top: 8px;">' + cancelBtn + '</div>' : '') + '\
-        </div>';
+          <div class="aicw-product-grid">' + cardsHtml + '</div>';
+      } else {
+        bodyHtml = '\
+          <div class="aicw-avatar-area">\
+            <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
+            <div class="aicw-avatar-status">' + statusText + '</div>\
+            <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
+            ' + transcriptHtml + navHtml + '\
+            <div style="margin-top: 24px;">\
+              <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+            </div>\
+            ' + (cancelBtn ? '<div style="margin-top: 8px;">' + cancelBtn + '</div>' : '') + '\
+          </div>';
+      }
 
       root.innerHTML = '\
         <div class="aicw-panel">\
@@ -834,6 +904,62 @@
         render();
       });
 
+      // Bind back button
+      var backBtn = root.querySelector(".aicw-back-btn");
+      if (backBtn) backBtn.addEventListener("click", function () {
+        showProductGrid = false;
+        productCards = [];
+        setVoiceState("idle", "");
+        setTimeout(startListening, 300);
+      });
+
+      // Bind product card clicks (navigate to product page)
+      root.querySelectorAll(".aicw-pcard").forEach(function (card) {
+        card.addEventListener("click", function (e) {
+          if (e.target.closest("[data-atc]")) return; // don't navigate on ATC click
+          var idx = parseInt(card.getAttribute("data-idx"));
+          var p = productCards[idx];
+          if (p && p.link) shopifyNavigate(p.link);
+        });
+      });
+
+      // Bind add to cart buttons
+      root.querySelectorAll("[data-atc]").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var idx = parseInt(btn.getAttribute("data-atc"));
+          var p = productCards[idx];
+          if (!p || inCartHandles[p.handle]) return;
+          btn.textContent = "Adding...";
+          btn.className = "aicw-pcard-atc adding";
+          if (p.variantId) {
+            shopifyAddToCart(p.variantId).then(function (ok) {
+              if (ok) {
+                inCartHandles[p.handle] = true;
+                btn.textContent = "✓ In Cart";
+                btn.className = "aicw-pcard-atc in-cart";
+                showToast(p.name + " added to cart!");
+              } else {
+                btn.textContent = "Add to Cart";
+                btn.className = "aicw-pcard-atc";
+              }
+            });
+          } else {
+            addToCartByProduct(p.name, p.link).then(function (result) {
+              if (result.success) {
+                inCartHandles[p.handle] = true;
+                btn.textContent = "✓ In Cart";
+                btn.className = "aicw-pcard-atc in-cart";
+                showToast(p.name + " added to cart!");
+              } else {
+                btn.textContent = "Add to Cart";
+                btn.className = "aicw-pcard-atc";
+              }
+            });
+          }
+        });
+      });
+
       // Bind mic
       root.querySelectorAll(".aicw-mic-btn").forEach(function (btn) {
         if (voiceState === "idle" || voiceState === "listening") {
@@ -842,7 +968,7 @@
       });
 
       // Bind cancel
-      var cancelEl = root.querySelector(".aicw-cancel-btn");
+      var cancelEl = root.querySelector(".aicw-cancel-btn:not(.aicw-back-btn)");
       if (cancelEl) cancelEl.addEventListener("click", function () {
         pendingNavigation = null;
         cancelVoice();
