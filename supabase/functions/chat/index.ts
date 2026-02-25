@@ -450,10 +450,12 @@ INSTRUCTIONS (NATIVE SHOPIFY MODE):
 :::action
 type: open_product
 product_name: Product Name
+product_handle: product-handle
 product_link: /products/product-handle
 :::
 
 - Use the product Handle from the catalog to build the link as /products/{handle}.
+- ALWAYS include product_handle (the URL slug) so the widget can look up images and prices from the live catalog.
 - When recommending multiple products (3+), also suggest the user can browse all results on Shopify by saying something like "You can also browse all of these on the store".
 - NEVER use :::product blocks. Only use :::action blocks.
 - When a user says "add to cart" or "buy this":
@@ -461,6 +463,7 @@ product_link: /products/product-handle
 :::action
 type: add_to_cart
 product_name: Product Name
+product_handle: product-handle
 product_link: /products/product-handle
 :::
 
