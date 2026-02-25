@@ -486,7 +486,7 @@
     var pendingNavigation = null;
     var productCards = (savedSession && savedSession.productCards) || [];
     var showProductGrid = (savedSession && savedSession.showProductGrid) || false;
-    var activeProduct = (savedSession && savedSession.activeProduct) || null; // In-widget PDP
+    // activeProduct removed — we navigate to real Shopify PDP instead
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -514,7 +514,6 @@
         voiceMessages: voiceMessages,
         productCards: productCards,
         showProductGrid: showProductGrid,
-        activeProduct: activeProduct,
         inCartHandles: inCartHandles,
         welcomeTriggered: welcomeTriggered
       });
@@ -907,12 +906,13 @@
         showProductGrid = true;
         persistState();
       } else if (openProductActions.length === 1) {
-        // Show product detail INSIDE the widget instead of navigating away
+        // Navigate to the real Shopify PDP — bot persists via sessionStorage
         var singleAction = openProductActions[0];
         var enrichedSingle = enrichAction(singleAction);
-        activeProduct = enrichedSingle;
-        showProductGrid = false;
-        productCards = [];
+        var pdpUrl = enrichedSingle.handle ? "/products/" + enrichedSingle.handle : enrichedSingle.link;
+        if (pdpUrl && pdpUrl !== "#") {
+          pendingNavigation = pdpUrl;
+        }
         persistState();
       } else if (openProductActions.length === 0 && hadGrid) {
         var hasNavAction = actions.some(function (a) {
@@ -1059,7 +1059,6 @@
       voiceMessages = [];
       productCards = [];
       showProductGrid = false;
-      activeProduct = null;
       inCartHandles = {};
       voiceTranscript = "";
       conversationId = null;
@@ -1147,48 +1146,7 @@
 
       var bodyHtml;
 
-      if (activeProduct) {
-        // ── In-widget Product Detail Page ──
-        var ap = activeProduct;
-        var apPriceHtml = '<span class="aicw-pdp-price">₹' + ap.price + '</span>';
-        if (ap.comparePrice && ap.comparePrice > ap.price) {
-          apPriceHtml += '<span class="aicw-pdp-old-price">₹' + ap.comparePrice + '</span>';
-        }
-        var apDiscountBadge = '';
-        if (ap.comparePrice && ap.comparePrice > ap.price) {
-          var apPct = Math.round(((ap.comparePrice - ap.price) / ap.comparePrice) * 100);
-          apDiscountBadge = '<span class="aicw-pdp-badge">' + apPct + '% OFF</span>';
-        }
-        var apInCart = inCartHandles[ap.handle];
-        var apAtcStyle = 'background:' + primaryColor + ';';
-        var apAtcClass = apInCart ? 'aicw-pdp-atc in-cart' : 'aicw-pdp-atc';
-        var apAtcText = apInCart ? '✓ Added to Cart' : 'Add to Cart';
-
-        var pdpWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
-
-        bodyHtml = '\
-          <button class="aicw-pdp-back aicw-pdp-back-btn">← Back</button>\
-          <div class="aicw-pdp">\
-            <div class="aicw-pdp-img-wrap">\
-              ' + (ap.image ? '<img class="aicw-pdp-img" src="' + ap.image + '" alt="' + ap.name + '" />' : '') + '\
-              ' + apDiscountBadge + '\
-            </div>\
-            <div class="aicw-pdp-info">\
-              <div class="aicw-pdp-name">' + ap.name + '</div>\
-              <div class="aicw-pdp-price-row">' + apPriceHtml + '</div>\
-              <div class="aicw-pdp-actions">\
-                <button class="' + apAtcClass + ' aicw-pdp-atc-btn" style="' + apAtcStyle + '">' + apAtcText + '</button>\
-              </div>\
-            </div>\
-          </div>\
-          <div class="aicw-bottom-bar">\
-            <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-            <div class="aicw-bar-info">\
-              <div class="aicw-bar-status">' + statusText + '</div>\
-              ' + pdpWaveformHtml + '\
-            </div>\
-          </div>';
-      } else if (showProductGrid && productCards.length > 1) {
+      if (showProductGrid && productCards.length > 1) {
         var cardsHtml = productCards.map(function (p, idx) {
           var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
           if (p.comparePrice && p.comparePrice > p.price) {
@@ -1275,60 +1233,18 @@
         setTimeout(startListening, 300);
       });
 
-      // Bind product card clicks — open in-widget PDP instead of navigating
+      // Bind product card clicks — navigate to real Shopify PDP
       root.querySelectorAll(".aicw-pcard").forEach(function (card) {
         card.addEventListener("click", function (e) {
           if (e.target.closest("[data-atc]")) return;
           var idx = parseInt(card.getAttribute("data-idx"));
           var p = productCards[idx];
-          if (p) {
-            activeProduct = p;
-            showProductGrid = false;
+          if (p && p.handle) {
             persistState();
-            render();
+            window.location.href = "/products/" + p.handle;
           }
         });
       });
-
-      // Bind PDP back button
-      var pdpBackBtn = root.querySelector(".aicw-pdp-back-btn");
-      if (pdpBackBtn) pdpBackBtn.addEventListener("click", function () {
-        activeProduct = null;
-        // If we had product cards, go back to grid
-        if (productCards.length > 1) {
-          showProductGrid = true;
-        }
-        persistState();
-        render();
-        if (voiceState === "idle") setTimeout(startListening, 300);
-      });
-
-      // Bind PDP add-to-cart button
-      var pdpAtcBtn = root.querySelector(".aicw-pdp-atc-btn");
-      if (pdpAtcBtn && activeProduct && !inCartHandles[activeProduct.handle]) {
-        pdpAtcBtn.addEventListener("click", function () {
-          var ap = activeProduct;
-          if (!ap) return;
-          pdpAtcBtn.textContent = "Adding...";
-          pdpAtcBtn.style.background = "#9ca3af";
-          pdpAtcBtn.style.pointerEvents = "none";
-          var doAdd = ap.variantId
-            ? shopifyAddToCart(ap.variantId)
-            : addToCartByProduct(ap.name, ap.link).then(function (r) { return r.success; });
-          doAdd.then(function (ok) {
-            if (ok) {
-              inCartHandles[ap.handle] = true;
-              showToast(ap.name + " added to cart! ✓", true);
-              persistState();
-              render();
-            } else {
-              pdpAtcBtn.textContent = "Add to Cart";
-              pdpAtcBtn.style.background = primaryColor;
-              pdpAtcBtn.style.pointerEvents = "";
-            }
-          });
-        });
-      }
 
       // Bind add to cart buttons
       root.querySelectorAll("[data-atc]").forEach(function (btn) {
