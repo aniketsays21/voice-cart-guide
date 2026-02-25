@@ -187,7 +187,41 @@
     /* Powered */\
     .aicw-powered {\
       text-align: center; font-size: 10px; color: #9ca3af; padding: 4px 0 8px; flex-shrink: 0;\
-    }";
+    }\
+    /* Loading dots for welcome */\
+    .aicw-loading-dots {\
+      display: flex; gap: 6px; justify-content: center; margin-top: 12px;\
+    }\
+    .aicw-loading-dots span {\
+      width: 8px; height: 8px; border-radius: 50%; background: " + primaryColor + ";\
+      animation: aicw-dot-pulse 1.4s ease-in-out infinite both;\
+    }\
+    .aicw-loading-dots span:nth-child(2) { animation-delay: 0.2s; }\
+    .aicw-loading-dots span:nth-child(3) { animation-delay: 0.4s; }\
+    @keyframes aicw-dot-pulse {\
+      0%, 80%, 100% { transform: scale(0.4); opacity: 0.3; }\
+      40% { transform: scale(1); opacity: 1; }\
+    }\
+    /* Card just-added flash */\
+    .aicw-pcard-just-added {\
+      animation: aicw-card-flash 1.5s ease;\
+    }\
+    @keyframes aicw-card-flash {\
+      0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }\
+      30% { box-shadow: 0 0 0 4px rgba(22,163,74,0.4); border-color: #16a34a; }\
+      100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }\
+    }\
+    /* Image placeholder */\
+    .aicw-pcard-placeholder {\
+      width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;\
+      background: #f3f4f6; color: #d1d5db;\
+    }\
+    .aicw-pcard-placeholder svg { width: 32px; height: 32px; }\
+    /* Cart toast large */\
+    .aicw-toast.aicw-toast-cart {\
+      background: #16a34a; font-size: 14px; padding: 12px 20px;\
+    }\
+    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }";
   }
 
   // ── Shopify helpers ────────────────────────────────────────────────
@@ -529,7 +563,7 @@
         }).then(function (r) { return r.json(); }).then(function (sttResult) {
           var transcript = sttResult.transcript;
           if (!transcript || !transcript.trim()) {
-            setVoiceState("idle", "Didn't catch that. Try again.");
+      setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
             return;
           }
           voiceTranscript = transcript;
@@ -539,7 +573,7 @@
           sendToChat(transcript);
         }).catch(function (err) {
           console.error("STT error:", err);
-          setVoiceState("idle", "Speech recognition failed. Try again.");
+          setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
         });
       };
       reader.readAsDataURL(blob);
@@ -605,9 +639,13 @@
         return pump();
       }).catch(function (err) {
         console.error("Chat error:", err);
-        setVoiceState("idle", "Connection error. Try again.");
+        setVoiceState("idle", "Connection error. Retrying...");
         isWelcomeLoading = false;
         render();
+        // Auto-retry listening after 3 seconds
+        setTimeout(function () {
+          if (voiceState === "idle") startListening();
+        }, 3000);
       });
     }
 
@@ -699,7 +737,8 @@
               shopifyAddToCart(enriched.variantId).then(function (ok) {
                 if (ok) {
                   inCartHandles[handleToMark] = true;
-                  showToast(enriched.name + " added to cart!");
+                  showToast(enriched.name + " added to cart! ✓", true);
+                  flashCard(handleToMark);
                   render(); // Re-render to update card state
                 }
               });
@@ -707,7 +746,8 @@
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
                 if (result.success) {
                   inCartHandles[handleToMark] = true;
-                  showToast(result.message);
+                  showToast(enriched.name + " added to cart! ✓", true);
+                  flashCard(handleToMark);
                   render();
                 }
               });
@@ -741,7 +781,7 @@
       fetch(ttsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-        body: JSON.stringify({ text: ttsText.slice(0, 500), sessionId: sessionId, target_language_code: "hi-IN" })
+        body: JSON.stringify({ text: ttsText.slice(0, 500), sessionId: sessionId, target_language_code: detectLang(ttsText) })
       }).then(function (r) { return r.json(); }).then(function (ttsResult) {
         if (voiceState !== "speaking") return;
         var audioBase64 = ttsResult.audio;
@@ -766,18 +806,22 @@
               setTimeout(startListening, 800);
               return;
             }
+            // Auto-listen after any response (including cart confirmations)
             setVoiceState("idle", "");
             setTimeout(startListening, 500);
           }
         };
-        currentAudio.onerror = function () {
+      currentAudio.onerror = function () {
           currentAudio = null;
           if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
+          // Still execute actions even if TTS fails
+          executePendingActions();
           setVoiceState("idle", "");
           setTimeout(startListening, 1000);
         };
         currentAudio.play().catch(function () {
           if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
+          executePendingActions();
           setVoiceState("idle", "");
           setTimeout(startListening, 1000);
         });
@@ -805,15 +849,35 @@
       sendToChat(welcomeQuery);
     }
 
-    function showToast(msg) {
+    // Language detection for TTS
+    function detectLang(text) {
+      var hindiChars = (text.match(/[\u0900-\u097F]/g) || []).length;
+      var totalChars = text.replace(/\s/g, "").length || 1;
+      return (hindiChars / totalChars) > 0.15 ? "hi-IN" : "en-IN";
+    }
+
+    function showToast(msg, isCart) {
       var existing = shadow.querySelector(".aicw-toast");
       if (existing) existing.remove();
       var t = document.createElement("div");
-      t.className = "aicw-toast";
+      t.className = "aicw-toast" + (isCart ? " aicw-toast-cart" : "");
       t.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' + msg;
       root.appendChild(t);
-      setTimeout(function () { t.classList.add("aicw-toast-out"); }, 2000);
-      setTimeout(function () { t.remove(); }, 2500);
+      setTimeout(function () { t.classList.add("aicw-toast-out"); }, isCart ? 3000 : 2000);
+      setTimeout(function () { t.remove(); }, isCart ? 3500 : 2500);
+    }
+
+    function flashCard(handle) {
+      if (!showProductGrid) return;
+      var cards = root.querySelectorAll(".aicw-pcard");
+      cards.forEach(function (card) {
+        var idx = parseInt(card.getAttribute("data-idx"));
+        var p = productCards[idx];
+        if (p && p.handle === handle) {
+          card.classList.add("aicw-pcard-just-added");
+          setTimeout(function () { card.classList.remove("aicw-pcard-just-added"); }, 1500);
+        }
+      });
     }
 
     // ── Render ────────────────────────────────────────────────────
@@ -833,7 +897,9 @@
 
       if (isWelcomeLoading) {
         avatarClass = "speaking";
-        statusText = "Connecting to your assistant...";
+        micClass = "processing";
+        micIcon = '<div class="aicw-spinner"></div>';
+        statusText = "Loading your assistant...";
       } else if (voiceState === "listening") {
         avatarClass = "listening";
         micIcon = ICONS.micOff;
@@ -885,7 +951,7 @@
           return '\
             <div class="aicw-pcard" data-idx="' + idx + '">\
               <div class="aicw-pcard-img-wrap">\
-                ' + (p.image ? '<img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" />' : '') + '\
+                ' + (p.image ? '<img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" />' : '<div class="aicw-pcard-placeholder"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div>') + '\
                 ' + discountBadge + '\
               </div>\
               <div class="aicw-pcard-body">\
@@ -925,6 +991,7 @@
             <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
             <div class="aicw-avatar-status">' + statusText + '</div>\
             <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
+            ' + (isWelcomeLoading ? '<div class="aicw-loading-dots"><span></span><span></span><span></span></div>' : '') + '\
             ' + transcriptHtml + navHtml + '\
             <div style="margin-top: 24px;">\
               <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
@@ -1005,9 +1072,9 @@
         });
       });
 
-      // Bind mic
+      // Bind mic (disabled during welcome load)
       root.querySelectorAll(".aicw-mic-btn").forEach(function (btn) {
-        if (voiceState === "idle" || voiceState === "listening") {
+        if (!isWelcomeLoading && (voiceState === "idle" || voiceState === "listening")) {
           btn.addEventListener("click", onMicToggle);
         }
       });
