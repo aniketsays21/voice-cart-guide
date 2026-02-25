@@ -57,6 +57,7 @@ function init() {
     suggestions: globalConfig.suggestions,
     position: (globalConfig.position || attr("position") || "bottom-right") as WidgetConfig["position"],
     zIndex: globalConfig.zIndex || parseInt(attr("z-index") || "99999"),
+    platform: (globalConfig.platform || attr("platform") || undefined) as WidgetConfig["platform"],
   };
 
   if (!config.apiUrl) {

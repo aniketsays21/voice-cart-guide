@@ -2,9 +2,10 @@
  * Embeddable AI Chat Widget — zero-dependency, self-contained.
  * Renders inside a Shadow DOM so host page styles don't leak in.
  */
-import { WidgetConfig, Msg } from "./types";
+import { WidgetConfig, Msg, ActionBlock } from "./types";
 import { getWidgetStyles } from "./styles";
 import { ICONS } from "./icons";
+import { isShopify, addToCartByProduct, shopifyNavigate, shopifyGoToCheckout, shopifyGoToCart } from "./shopify";
 
 function generateSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -21,10 +22,11 @@ function miniMarkdown(text: string): string {
     .replace(/\n/g, "<br>");
 }
 
-// Parse :::product blocks
-function parseContent(content: string): string {
+// Parse :::product and :::action blocks
+function parseContent(content: string, onAction?: (action: ActionBlock) => void): string {
   const parts: string[] = [];
-  const regex = /:::product\n([\s\S]*?):::/g;
+  // Combined regex for both product and action blocks
+  const regex = /:::(product|action)\n([\s\S]*?):::/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let productBuffer: string[] = [];
@@ -39,12 +41,19 @@ function parseContent(content: string): string {
   while ((match = regex.exec(content)) !== null) {
     const before = content.slice(lastIndex, match.index).trim();
     if (before) { flushProducts(); parts.push(`<p>${miniMarkdown(before)}</p>`); }
+    const blockType = match[1];
     const props: Record<string, string> = {};
-    match[1].split("\n").forEach((line) => {
+    match[2].split("\n").forEach((line) => {
       const i = line.indexOf(":");
       if (i > 0) { const k = line.slice(0, i).trim(); const v = line.slice(i + 1).trim(); if (k && v) props[k] = v; }
     });
-    productBuffer.push(renderProductCard(props));
+
+    if (blockType === "product") {
+      productBuffer.push(renderProductCard(props));
+    } else if (blockType === "action" && onAction) {
+      onAction(props as unknown as ActionBlock);
+    }
+
     lastIndex = regex.lastIndex;
   }
   flushProducts();
@@ -71,7 +80,11 @@ export function createWidget(config: WidgetConfig) {
     suggestions = ["Show me electronics", "I need a gift under ₹1000"],
     position = "bottom-right",
     zIndex = 99999,
+    platform,
   } = config;
+
+  // Detect platform: explicit config > auto-detect > generic
+  const isShopifyPlatform = platform === "shopify" || (platform === undefined && isShopify());
 
   const chatUrl = `${apiUrl}/functions/v1/chat`;
   const sessionId = generateSessionId();
@@ -79,6 +92,46 @@ export function createWidget(config: WidgetConfig) {
   let messages: Msg[] = [];
   let isLoading = false;
   let isOpen = false;
+  let pendingActions: ActionBlock[] = [];
+
+  // Handle parsed action blocks from AI responses
+  function handleAction(action: ActionBlock) {
+    pendingActions.push(action);
+  }
+
+  // Execute collected actions after render
+  async function executePendingActions() {
+    const actions = [...pendingActions];
+    pendingActions = [];
+
+    for (const action of actions) {
+      if (!isShopifyPlatform) continue; // Only execute on Shopify
+
+      switch (action.type) {
+        case "add_to_cart": {
+          if (action.product_name) {
+            const result = await addToCartByProduct(action.product_name, action.product_link);
+            // Append feedback as assistant message
+            const feedbackMsg: Msg = { role: "assistant", content: result.message };
+            messages = [...messages, feedbackMsg];
+            render();
+          }
+          break;
+        }
+        case "open_product": {
+          const link = action.product_link;
+          if (link) shopifyNavigate(link);
+          break;
+        }
+        case "navigate_to_checkout":
+          shopifyGoToCheckout();
+          break;
+        case "navigate_to_cart":
+          shopifyGoToCart();
+          break;
+      }
+    }
+  }
 
   // Create host element
   const host = document.createElement("div");
@@ -113,7 +166,7 @@ export function createWidget(config: WidgetConfig) {
 
     const messagesHtml = messages.map((m) => {
       const cls = m.role === "user" ? "user" : "assistant";
-      return `<div class="aicw-msg aicw-msg-${cls}"><div class="aicw-bubble aicw-bubble-${cls}">${m.role === "user" ? miniMarkdown(m.content) : parseContent(m.content)}</div></div>`;
+      return `<div class="aicw-msg aicw-msg-${cls}"><div class="aicw-bubble aicw-bubble-${cls}">${m.role === "user" ? miniMarkdown(m.content) : parseContent(m.content, handleAction)}</div></div>`;
     }).join("");
 
     const loadingHtml = isLoading && messages[messages.length - 1]?.role !== "assistant"
@@ -232,6 +285,8 @@ export function createWidget(config: WidgetConfig) {
     } finally {
       isLoading = false;
       render();
+      // Execute any Shopify actions parsed from the response
+      executePendingActions();
     }
   }
 
