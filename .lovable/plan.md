@@ -1,74 +1,78 @@
 
 
-# Fix: Make AI Search Live Shopify Catalog and Display Rich Product Cards
+# Navigate to Shopify Native Pages Instead of Showing Cards
 
-## What You Want
-User says "give me party perfume" -> AI searches the live Shopify store catalog -> displays rich product cards with images, prices, tags, and Add to Cart buttons. No new UI to build — the product card grid already exists in the widget code.
+## What Changes
 
-## Why It's Not Working Right Now
+When the AI recommends products, the widget will close and redirect the user to Shopify's native search results or collection page -- showing products with your store's own theme, product cards, images, prices, and buttons.
 
-Three bugs are preventing it from working:
-
-1. **`productLinks` is undefined** — In the widget code, there's a reference to `productLinks.push(...)` on line 374, but `productLinks` was never declared. This causes a JavaScript runtime error, so product actions silently fail and no cards appear.
-
-2. **Price divided by 100 incorrectly** — The `enrichAction` function divides Shopify prices by 100 (lines 642-643), but Shopify's `/products.json` returns prices as strings like `"599.00"` (already in rupees, not paise). So a Rs 599 product shows as Rs 5.99.
-
-3. **Welcome message sends wrong text** — `triggerWelcome()` pushes "Hi, show me top selling Bella Vita products" to `voiceMessages` but sends `"Welcome"` as the query to the chat function. This mismatch may confuse the AI.
-
-## Fixes (3 files)
-
-### File 1: `public/ai-chat-widget.js`
-
-| Fix | What changes |
-|-----|-------------|
-| Remove `productLinks` reference | Delete the dead code in `executePendingActions` that tries to push to undefined `productLinks`. The `open_product` actions are already handled correctly in `onChatComplete` (line 663) where they get enriched and added to `productCards`. |
-| Fix price calculation | Remove the `/ 100` division in `enrichAction`. Use the raw price string from Shopify as-is (already in rupees). |
-| Fix welcome message | Make `sendToChat` use the same text as what's pushed to `voiceMessages`. |
-
-### File 2: `supabase/functions/chat/index.ts`
-
-| Fix | What changes |
-|-----|-------------|
-| Client product price mapping | In `mapClientProducts`, the price is also divided by 100 — fix this to use the raw value since Shopify Indian stores use rupees not paise. |
-
-### File 3: No new files needed
-
-The product card grid CSS and rendering logic already exist and work correctly. Once the three bugs above are fixed:
-
-1. Widget opens, fetches `/products.json` from Shopify (already working)
-2. User speaks "party perfume", STT converts to text
-3. Text + full catalog sent to backend
-4. Backend filters catalog by intent (category: Perfume, occasion: party)
-5. AI picks the best matches and outputs `:::action` blocks with handles
-6. Widget's `onChatComplete` extracts actions, calls `enrichAction` to match against local catalog
-7. `productCards` array is populated with images, correct prices, variant IDs
-8. Render function displays the 2-column product grid with images, prices, discount badges, and Add to Cart buttons
-
-## End-to-End Flow After Fix
+## How It Works
 
 ```text
 User speaks: "party perfume"
        |
        v
-STT (Sarvam AI) -> "party perfume"
+STT converts to text -> sent to backend
        |
        v
-Backend receives text + 250 Shopify products
+AI analyzes catalog, identifies matching products
        |
        v
-Intent extraction: category=Perfume, occasion=party
+AI responds with speech + a navigation action
        |
        v
-Filtered catalog sent to LLM (Gemini) as context
+Widget speaks the response, then redirects to:
+/search?q=party+perfume&type=product
        |
        v
-LLM responds with product recommendations + :::action blocks
-       |
-       v
-Widget extracts actions, matches handles to local catalog
-       |
-       v
-Rich product cards rendered: images, prices (Rs 599), discount badges, Add to Cart
+User sees native Shopify search results page
+with your store's theme, product cards, filters, etc.
 ```
 
-No new product card widget needed — the existing one just needs these 3 bug fixes to start working.
+## Changes by File
+
+### 1. Backend: `supabase/functions/chat/index.ts`
+
+Update the native display system prompt so the AI outputs a new action type `navigate_to_search` with the search query, instead of individual `open_product` actions for each product:
+
+```
+:::action
+type: navigate_to_search
+search_query: party perfume
+:::
+```
+
+The AI will still speak a conversational response ("Here are some great party perfumes for you"), and the widget will navigate after the speech finishes.
+
+For single-product requests ("tell me about Dynamite perfume"), it will still use `open_product` to go directly to that product page.
+
+### 2. Widget: `public/ai-chat-widget.js`
+
+- Add a `navigate_to_search` action handler that redirects to `/search?q={query}&type=product`
+- Remove the product card grid rendering (the `.aicw-product-grid` section) since products will be shown on Shopify's native pages
+- After TTS finishes speaking, auto-navigate to the search/collection page
+- Keep the `open_product` action for single product navigation (already works)
+- Keep `add_to_cart` action for direct cart additions via voice
+
+### 3. Flow Change
+
+| Scenario | Current Behavior | New Behavior |
+|----------|-----------------|-------------|
+| "Show me party perfumes" | Cards in widget | AI speaks, then redirects to `/search?q=party+perfume&type=product` |
+| "Show me gift sets under 1000" | Cards in widget | AI speaks, then redirects to `/search?q=gift+sets&type=product` |
+| "Tell me about Dynamite perfume" | Card in widget | AI speaks, then redirects to `/products/dynamite-perfume` |
+| "Add this to cart" | Shopify cart API | Same (no change) |
+
+## What the User Sees
+
+1. Opens widget, speaks "party perfume"
+2. AI responds via voice: "Here are some great party perfumes from Bella Vita"
+3. After speech ends, the page navigates to the store's search results
+4. User sees their Shopify store's native collection/search page with full product cards, filters, sorting -- everything from the theme
+
+## Technical Details
+
+- Search URL format: `/search?q={query}&type=product` (works on all Shopify stores)
+- Navigation happens after TTS completes so the user hears the response first
+- Product card CSS and rendering code will be removed from the widget since it's no longer needed
+- The `productCards` array and `enrichAction` function will be simplified to only handle delayed navigation
