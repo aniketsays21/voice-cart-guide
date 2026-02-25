@@ -848,7 +848,8 @@
           setTimeout(startListening, 500);
           return;
         }
-        currentAudio = new Audio("data:audio/wav;base64," + audioBase64);
+        var audioMime = ttsResult.audioFormat === "mp3" ? "audio/mpeg" : "audio/wav";
+        currentAudio = new Audio("data:" + audioMime + ";base64," + audioBase64);
         currentAudio.onended = function () {
           currentAudio = null;
           if (voiceState === "speaking") {

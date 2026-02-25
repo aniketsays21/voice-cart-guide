@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +29,13 @@ async function checkRateLimit(supabase: any, sessionId: string, functionName: st
   return true;
 }
 
+// Select ElevenLabs voice based on language
+function selectVoice(langCode: string): string {
+  // Hindi-friendly multilingual voices
+  if (langCode === "hi-IN") return "EXAVITQu4vr4xnSDxMaL"; // Sarah - multilingual
+  return "EXAVITQu4vr4xnSDxMaL"; // Sarah - works well for English and Hindi both
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -36,9 +44,9 @@ Deno.serve(async (req) => {
   const startTime = Date.now();
 
   try {
-    const apiKey = Deno.env.get("SARVAM_API_KEY");
+    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "SARVAM_API_KEY not configured" }), {
+      return new Response(JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -75,32 +83,44 @@ Deno.serve(async (req) => {
 
     // Limit text to 500 chars for TTS
     const truncatedText = text.slice(0, 500);
-    const langCode = target_language_code || "hi-IN";
+    const langCode = target_language_code || "en-IN";
+    const voiceId = selectVoice(langCode);
 
-    const response = await fetch("https://api.sarvam.ai/text-to-speech", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: truncatedText,
-        target_language_code: langCode,
-        model: "bulbul:v2",
-        speaker: "anushka",
-      }),
-    });
+    console.log(`TTS: lang=${langCode}, voice=${voiceId}, textLen=${truncatedText.length}`);
+
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: truncatedText,
+          model_id: "eleven_multilingual_v2",
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.3,
+            use_speaker_boost: true,
+          },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Sarvam TTS error:", response.status, errText);
+      console.error("ElevenLabs TTS error:", response.status, errText);
       return new Response(JSON.stringify({ error: "Text-to-speech failed", details: errText }), {
         status: response.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const result = await response.json();
+    // ElevenLabs returns raw audio binary — encode to base64
+    const audioBuffer = await response.arrayBuffer();
+    const audioBase64 = base64Encode(audioBuffer);
 
     // Log request
     try {
@@ -112,7 +132,11 @@ Deno.serve(async (req) => {
       });
     } catch {}
 
-    return new Response(JSON.stringify({ audio: result.audios?.[0] || "", request_id: result.request_id }), {
+    // Return in same format as before, but with audioFormat indicator
+    return new Response(JSON.stringify({ 
+      audio: audioBase64, 
+      audioFormat: "mp3"
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
