@@ -10,6 +10,7 @@ const corsHeaders = {
 
 // --- Validation helpers ---
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SESSION_ID_RE = /^session_\d+_[a-z0-9]+$/i;
 const MAX_MESSAGES = 20;
 const MAX_MSG_LENGTH = 2000;
 const ALLOWED_ROLES = new Set(["user", "assistant"]);
@@ -24,7 +25,7 @@ function validateInput(body: any): string | null {
     if (m.content.length > MAX_MSG_LENGTH) return `Message too long (max ${MAX_MSG_LENGTH} chars)`;
     if (!ALLOWED_ROLES.has(m.role)) return `Invalid role: ${m.role}`;
   }
-  if (sessionId && !UUID_RE.test(sessionId)) return "Invalid sessionId format";
+  if (sessionId && !UUID_RE.test(sessionId) && !SESSION_ID_RE.test(sessionId)) return "Invalid sessionId format";
   if (conversationId && !UUID_RE.test(conversationId)) return "Invalid conversationId format";
   return null;
 }
