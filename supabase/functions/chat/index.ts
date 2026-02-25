@@ -505,7 +505,17 @@ type: navigate_to_cart
 
 - Keep responses concise, warm, and conversational. The user will be navigated to the store page after you speak, so tell them what they will see.
 - Guide users through the shopping journey, ask follow-up questions.
-- When a user is viewing a product (message starts with "[The user is viewing the product"), answer about THAT product only.`;
+- When a user is viewing a product (message starts with "[The user is viewing the product"), answer about THAT product only.
+
+CONVERSATIONAL SHOPPING JOURNEY:
+- The user can speak voice commands while browsing products. They do NOT need to go back to speak again.
+- When a user says "add the first one to cart", "add the second product", or refers to products by position, identify the correct product from your previous recommendations and output an add_to_cart action with the correct product_name and product_handle.
+- When a user says "add [specific product name] to cart", output an add_to_cart action for that product.
+- When a user says "show me something cheaper", "show me more options", "different products", output new open_product action blocks with different recommendations.
+- When a user says "go to checkout", "checkout now", output navigate_to_checkout.
+- When a user says "show my cart", "open cart", output navigate_to_cart.
+- You can combine speech with actions. For example: "Great choice! Adding CEO Man to your cart." followed by the add_to_cart action block.
+- Remember what products you previously recommended so you can handle positional references like "the first one", "the third product", etc.`;
   }
 
   // Legacy mode — custom product cards
