@@ -1,6 +1,6 @@
 /**
  * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
- * v2.3 — Fix: show product grid immediately after chat response
+ * v2.4 — Fix product grid display + diagnostic logging
  */
 (function () {
   "use strict";
@@ -671,7 +671,11 @@
 
         function pump() {
           return streamReader.read().then(function (result) {
-            if (result.done) { onChatComplete(fullResponse, query); return; }
+            if (result.done) {
+              console.log("[AI Widget] Stream complete, fullResponse length:", fullResponse.length, "preview:", fullResponse.substring(0, 200));
+              onChatComplete(fullResponse, query);
+              return;
+            }
             textBuffer += decoder.decode(result.value, { stream: true });
             var newlineIndex;
             while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
@@ -695,7 +699,7 @@
         }
         return pump();
       }).catch(function (err) {
-        console.error("Chat error:", err);
+        console.error("[AI Widget] Chat fetch error:", err);
         setVoiceState("idle", "Connection error. Retrying...");
         isWelcomeLoading = false;
         render();
@@ -741,9 +745,11 @@
     }
 
     function onChatComplete(fullResponse, query) {
+      console.log("[AI Widget] onChatComplete called, response length:", fullResponse.length);
       voiceMessages.push({ role: "assistant", content: fullResponse });
 
       var actions = extractActions(fullResponse);
+      console.log("[AI Widget] Extracted actions:", actions.length, JSON.stringify(actions.map(function(a){ return a.type; })));
       pendingNavigation = null;
       
       var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
@@ -809,7 +815,9 @@
 
       // TTS
       var ttsText = cleanForTTS(fullResponse);
+      console.log("[AI Widget] TTS text length:", ttsText ? ttsText.length : 0, "preview:", ttsText ? ttsText.substring(0, 100) : "(empty)");
       if (!ttsText) {
+        console.log("[AI Widget] No TTS text, skipping speech. productCards:", productCards.length);
         if (pendingNavigation && isShopifyPlatform) {
           setTimeout(function () { window.location.href = pendingNavigation; pendingNavigation = null; }, 500);
           return;
@@ -827,6 +835,7 @@
       setVoiceState("speaking", "Speaking...");
       render();
 
+      console.log("[AI Widget] Calling TTS:", ttsUrl);
       fetch(ttsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
