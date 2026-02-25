@@ -44,6 +44,30 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_usage: {
+        Row: {
+          function_name: string
+          id: string
+          request_count: number
+          session_id: string
+          usage_date: string
+        }
+        Insert: {
+          function_name: string
+          id?: string
+          request_count?: number
+          session_id: string
+          usage_date?: string
+        }
+        Update: {
+          function_name?: string
+          id?: string
+          request_count?: number
+          session_id?: string
+          usage_date?: string
+        }
+        Relationships: []
+      }
       discounts: {
         Row: {
           applicable_category: string | null
@@ -159,6 +183,57 @@ export type Database = {
           rating?: number | null
           tags?: string[] | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      rate_limits: {
+        Row: {
+          function_name: string
+          id: string
+          request_count: number
+          session_id: string
+          window_start: string
+        }
+        Insert: {
+          function_name: string
+          id?: string
+          request_count?: number
+          session_id: string
+          window_start?: string
+        }
+        Update: {
+          function_name?: string
+          id?: string
+          request_count?: number
+          session_id?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
+      request_logs: {
+        Row: {
+          created_at: string
+          function_name: string
+          id: string
+          message_length: number | null
+          response_time_ms: number | null
+          session_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          function_name: string
+          id?: string
+          message_length?: number | null
+          response_time_ms?: number | null
+          session_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          function_name?: string
+          id?: string
+          message_length?: number | null
+          response_time_ms?: number | null
+          session_id?: string | null
         }
         Relationships: []
       }
