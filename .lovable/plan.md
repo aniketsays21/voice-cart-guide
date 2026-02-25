@@ -1,110 +1,99 @@
 
 
-# Display Multiple Products from Live Shopify Catalog Inside the Widget
+# End-to-End Voice Shopping Journey: Discovery to Checkout
 
-## Overview
+## Problem
 
-Instead of navigating away to Shopify search pages, the widget will display multiple product cards fetched from the live Shopify catalog directly inside the widget. The AI will recommend multiple products, and the widget will render them using real data (images, prices, availability) from the store.
+Currently, when the widget displays the product grid, the microphone button disappears. The user loses the ability to speak and must click "Back" to return to the avatar view before they can talk again. This breaks the conversational shopping flow.
 
-## How It Works
+## Solution
+
+Keep the mic button visible at all times -- even when the product grid is showing. The user can browse products visually AND continue speaking voice commands simultaneously, creating a seamless journey from discovery to checkout.
 
 ```text
-User speaks: "show me party perfumes"
+User opens widget
        |
        v
-AI analyzes catalog, picks 3-6 best matches
+"Show me party perfumes"  -->  AI speaks + shows product grid
+       |                            (mic stays visible at bottom)
+       v
+"Add the first one to cart"  -->  AI identifies product, adds to cart
+       |                            (grid stays, card updates to "In Cart")
+       v
+"Show me something cheaper"  -->  AI picks new products, grid refreshes
        |
        v
-AI responds with speech + multiple open_product actions
+"Add CEO Man to cart"  -->  Adds specific product by name
        |
        v
-Widget speaks the response
-       |
-       v
-After speech ends, widget shows a product grid
-populated with LIVE Shopify data from the client-side catalog
-(real images, real prices, real availability)
-       |
-       v
-User can tap "Add to Cart" or "View" on any product
+"Go to checkout"  -->  Navigates to /checkout
 ```
 
 ## Changes by File
 
-### 1. Backend: `supabase/functions/chat/index.ts`
+### 1. Widget: `public/ai-chat-widget.js`
 
-Update the system prompt's NAVIGATION RULES to:
-- Replace `navigate_to_search` with multiple `open_product` action blocks
-- For category queries ("party perfumes", "gift sets under 1000"), the AI should output 3-6 `open_product` actions, one per recommended product
-- For single product queries, output one `open_product` action (same as now)
-- The AI picks the best matching products from the catalog using handles
+**Layout Change -- Add mic to product grid view:**
+- When `showProductGrid` is true, render the product grid BUT also show a compact mic button bar at the bottom (below the grid)
+- The mic button will be smaller (40px) and positioned in a bottom bar alongside a status text
+- This allows the user to tap mic and speak while viewing products
 
-Example AI output for "show me party perfumes":
+**Voice command handling in product grid context:**
+- When the user speaks while the product grid is visible, the grid stays visible during processing/speaking
+- After the AI responds, update the grid if new products are recommended, or keep the same grid if the action was "add to cart"
+- Only hide the grid if the AI response has zero `open_product` actions (meaning the conversation moved away from product browsing)
+
+**Contextual voice commands the AI already supports (via system prompt):**
+- "Add [product name] to cart" -- triggers `add_to_cart` action, grid stays, card updates
+- "Show me more" or "something cheaper" -- triggers new `open_product` actions, grid refreshes
+- "Go to checkout" / "Open cart" -- navigates away
+- "Tell me about [product]" -- single product, navigates to PDP
+
+**Specific code changes:**
+
+1. **Render function**: When `showProductGrid` is true, add a bottom bar with a compact mic button below the product grid, similar to the avatar view's mic but smaller
+2. **onChatComplete**: When a new response comes in while the grid is showing:
+   - If new `open_product` actions exist, refresh `productCards` and keep grid visible
+   - If only `add_to_cart` actions, keep current grid, update the relevant card to "In Cart"
+   - If no product actions (pure conversation), hide grid and return to avatar view
+3. **Bind mic events** on the compact mic button in the product grid view
+4. **Add bottom bar CSS** for the compact mic in grid view (`.aicw-grid-bar`)
+
+### 2. Backend: `supabase/functions/chat/index.ts`
+
+**Update system prompt** to add awareness of the conversational shopping journey:
+
+- Add instructions for handling follow-up commands like "add the first one", "add CEO Man", "show me cheaper options"
+- When the user says "add [product name] to cart", the AI should output an `add_to_cart` action block with the product name and handle
+- When the user asks for more/different products, output new `open_product` action blocks
+- When the user says "checkout" or "go to cart", output the appropriate navigation action
+
+### 3. Visual Flow
+
+| State | What User Sees | Mic Available? |
+|-------|---------------|----------------|
+| Initial | Avatar + large mic | Yes |
+| Listening | Avatar pulsing + waveform | Yes (active) |
+| Processing | Avatar + spinner | No (processing) |
+| Speaking | Avatar pulsing | No (speaking) |
+| Product Grid | 2-column cards + small mic at bottom | Yes |
+| Grid + Listening | Cards + mic active (red) + waveform | Yes (active) |
+| Grid + Processing | Cards + spinner in mic area | No (processing) |
+| Grid + Speaking | Cards + speaking indicator | No (speaking) |
+
+### 4. New CSS Additions
+
+```text
+.aicw-grid-bar
+  - Fixed at bottom of panel, above "Powered by AI"
+  - Contains: status text + compact mic button (40px)
+  - Background: white with top border
+  - Compact waveform canvas when listening
 ```
-Here are some amazing party perfumes from Bella Vita.
 
-:::action
-type: open_product
-product_name: CEO Man
-product_handle: ceo-man-perfume
-product_link: /products/ceo-man-perfume
-:::
+### 5. What Changes for the User
 
-:::action
-type: open_product
-product_name: Skai Aquatic
-product_handle: skai-aquatic-perfume
-product_link: /products/skai-aquatic-perfume
-:::
+Before: Speak -> See products -> Click "Back" -> Speak again -> Repeat
+After: Speak -> See products -> Speak again (mic is right there) -> Products update -> Speak "add to cart" -> Done -> "Checkout" -> Navigated
 
-:::action
-type: open_product
-product_name: Honey Oud
-product_handle: honey-oud
-product_link: /products/honey-oud
-:::
-```
-
-### 2. Widget: `public/ai-chat-widget.js`
-
-**onChatComplete changes:**
-- When multiple `open_product` actions are found, instead of setting `pendingNavigation`, collect them into a `productCards` array
-- Each product is enriched with live data from `shopifyCatalog` using the existing `enrichAction` function (images, prices, variant IDs)
-- After TTS finishes speaking, show the product grid instead of navigating away
-
-**Render changes:**
-- After the AI speaks, switch the widget view from avatar mode to a product grid view
-- The product grid uses the existing `.aicw-pcard` CSS (already defined in styles)
-- Each card shows: product image, name, price (with compare-at-price strikethrough), and an "Add to Cart" button
-- Tapping "Add to Cart" uses the existing `shopifyAddToCart` function with the live variant ID
-- Tapping the product image or name navigates to the product detail page on Shopify
-- A "Back" button returns to the avatar/mic view for another query
-
-**Single product behavior:**
-- If only one `open_product` action exists, navigate directly to the product page (same as current behavior)
-
-### 3. Flow Comparison
-
-| Scenario | Current Behavior | New Behavior |
-|----------|-----------------|-------------|
-| "Show me party perfumes" | Redirects to /search page | Shows 3-6 product cards in widget with live images and prices |
-| "Gift sets under 1000" | Redirects to /search page | Shows matching gift set cards in widget |
-| "Tell me about Dynamite" | Navigates to product page | Same -- navigates to product page (single product) |
-| "Add to cart" | Shopify cart API | Same (no change) |
-
-### 4. What the User Sees
-
-1. Opens widget, speaks "party perfumes"
-2. AI responds via voice: "Here are some great party perfumes from Bella Vita"
-3. After speech ends, the avatar view transitions to a 2-column product grid
-4. Each card shows the real product image, name, live price, and "Add to Cart" button -- all from the Shopify store's live data
-5. User can add items to cart directly, tap a card to visit the product page, or tap "Back" to ask another question
-
-### 5. Technical Details
-
-- Product data comes from `shopifyCatalog` which is fetched client-side from `/products.json?limit=250` on widget initialization -- this is live Shopify data
-- The `enrichAction` function already maps AI-provided handles to the local catalog, extracting variant IDs, images, prices, and availability
-- The `.aicw-pcard` CSS styles are already defined in the widget stylesheet -- product cards, images, prices, badges, and "Add to Cart" buttons are all styled
-- The `shopifyAddToCart` function uses Shopify's `/cart/add.js` API with variant IDs for reliable cart operations
-- No page navigation occurs for multi-product responses -- the user stays on the current page with the widget overlay
-
+The entire journey from discovery to checkout happens through continuous voice conversation without ever needing to leave the product view.
