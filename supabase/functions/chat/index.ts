@@ -124,6 +124,82 @@ async function checkDailyUsage(
   return true;
 }
 
+// --- Shopify product fetching ---
+const SHOPIFY_STORE_URL = "https://bella-vita-test.myshopify.com";
+
+interface ShopifyVariant {
+  id: number;
+  title: string;
+  price: string;
+  compare_at_price: string | null;
+  available: boolean;
+}
+
+interface ShopifyProduct {
+  id: number;
+  title: string;
+  handle: string;
+  body_html: string | null;
+  vendor: string;
+  product_type: string;
+  tags: string[];
+  images: { src: string }[];
+  variants: ShopifyVariant[];
+}
+
+function mapShopifyProduct(p: ShopifyProduct) {
+  const firstVariant = p.variants?.[0];
+  const price = firstVariant ? parseFloat(firstVariant.price) : 0;
+  const compareAtPrice = firstVariant?.compare_at_price ? parseFloat(firstVariant.compare_at_price) : null;
+  const image = p.images?.[0]?.src || null;
+  const link = `${SHOPIFY_STORE_URL}/products/${p.handle}`;
+  const description = p.body_html ? p.body_html.replace(/<[^>]*>/g, "").substring(0, 300) : null;
+
+  return {
+    id: String(p.id),
+    name: p.title,
+    price: compareAtPrice && compareAtPrice > price ? compareAtPrice : price,
+    salePrice: compareAtPrice && compareAtPrice > price ? price : price,
+    description,
+    image_url: image,
+    external_link: link,
+    category: p.product_type || "General",
+    tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? (p.tags as string).split(", ") : []),
+    rating: 4.5, // Shopify doesn't have native ratings
+    available: firstVariant?.available ?? true,
+  };
+}
+
+async function fetchShopifyProducts(): Promise<any[]> {
+  const allProducts: any[] = [];
+  let page = 1;
+  const limit = 250;
+
+  while (true) {
+    const url = `${SHOPIFY_STORE_URL}/products.json?limit=${limit}&page=${page}`;
+    console.log(`Fetching Shopify products page ${page}...`);
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      console.error(`Shopify fetch failed: ${resp.status}`);
+      break;
+    }
+    const data = await resp.json();
+    const products: ShopifyProduct[] = data.products || [];
+    if (products.length === 0) break;
+
+    for (const p of products) {
+      allProducts.push(mapShopifyProduct(p));
+    }
+    if (products.length < limit) break;
+    page++;
+    // Safety limit
+    if (page > 10) break;
+  }
+
+  console.log(`Fetched ${allProducts.length} products from Shopify`);
+  return allProducts;
+}
+
 // --- Product cache ---
 let cachedProducts: any[] | null = null;
 let cachedDiscounts: any[] | null = null;
@@ -136,12 +212,22 @@ async function getCachedCatalog(supabase: any) {
     return { products: cachedProducts, discounts: cachedDiscounts };
   }
 
-  const [{ data: products }, { data: discounts }] = await Promise.all([
-    supabase.from("products").select("*").limit(200),
-    supabase.from("discounts").select("*").eq("is_active", true),
-  ]);
+  // Try Shopify first, fall back to database
+  let products: any[] = [];
+  try {
+    products = await fetchShopifyProducts();
+  } catch (e) {
+    console.error("Shopify fetch failed, falling back to database:", e);
+  }
 
-  cachedProducts = products || [];
+  if (products.length === 0) {
+    const { data } = await supabase.from("products").select("*").limit(500);
+    products = data || [];
+  }
+
+  const { data: discounts } = await supabase.from("discounts").select("*").eq("is_active", true);
+
+  cachedProducts = products;
   cachedDiscounts = discounts || [];
   cacheTimestamp = now;
   return { products: cachedProducts, discounts: cachedDiscounts };
@@ -266,12 +352,15 @@ function buildFilteredCatalog(
 function formatCatalog(catalogProducts: any[]): string {
   return catalogProducts
     .map((p: any) => {
+      const price = p.price || 0;
+      const salePrice = p.salePrice || p.price || 0;
       const lines = [
-        `- ${p.name} | MRP: ₹${p.price}${p.salePrice < p.price ? ` | Sale Price: ₹${p.salePrice}` : ""} | Category: ${p.category || "General"} | Rating: ${p.rating}/5 | ID: ${p.id}`,
+        `- ${p.name} | MRP: ₹${price}${salePrice < price ? ` | Sale Price: ₹${salePrice}` : ""} | Category: ${p.category || "General"} | Rating: ${p.rating}/5`,
       ];
       if (p.description) lines.push(`  Description: ${p.description.replace(/<[^>]*>/g, "").substring(0, 200)}`);
       if (p.tags && p.tags.length > 0) lines.push(`  Tags: ${p.tags.join(", ")}`);
       if (p.bestDiscount) lines.push(`  Discount: ${p.bestDiscount.discount_percent}% off`);
+      if (p.image_url) lines.push(`  Image: ${p.image_url}`);
       lines.push(`  Link: ${p.external_link}`);
       return lines.join("\n");
     })
