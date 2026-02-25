@@ -1,94 +1,74 @@
 
 
-# Rich Shopify Product Cards in the Widget
+# Fix: Make AI Search Live Shopify Catalog and Display Rich Product Cards
 
-## Problem
+## What You Want
+User says "give me party perfume" -> AI searches the live Shopify store catalog -> displays rich product cards with images, prices, tags, and Add to Cart buttons. No new UI to build — the product card grid already exists in the widget code.
 
-When the AI recommends products, they appear as plain text links (just product names with an arrow icon). The user wants full product cards matching the Shopify collection page style -- with images, prices, discount badges, ratings, and Add to Cart buttons.
+## Why It's Not Working Right Now
 
-## Root Cause
+Three bugs are preventing it from working:
 
-Two issues working together:
+1. **`productLinks` is undefined** — In the widget code, there's a reference to `productLinks.push(...)` on line 374, but `productLinks` was never declared. This causes a JavaScript runtime error, so product actions silently fail and no cards appear.
 
-1. **System prompt (native mode)** tells the AI to NOT use `:::product` blocks and only use `:::action` blocks, which contain just a name and link -- no image, price, or other data.
-2. **Widget render function** displays these actions as simple `<a>` text links with no visual richness.
+2. **Price divided by 100 incorrectly** — The `enrichAction` function divides Shopify prices by 100 (lines 642-643), but Shopify's `/products.json` returns prices as strings like `"599.00"` (already in rupees, not paise). So a Rs 599 product shows as Rs 5.99.
 
-The Shopify catalog IS being fetched client-side (into `shopifyCatalog`), but it's never used for display -- only sent to the backend for AI context.
+3. **Welcome message sends wrong text** — `triggerWelcome()` pushes "Hi, show me top selling Bella Vita products" to `voiceMessages` but sends `"Welcome"` as the query to the chat function. This mismatch may confuse the AI.
 
-## Solution
+## Fixes (3 files)
 
-### 1. Backend: Update system prompt to include product details in action blocks
+### File 1: `public/ai-chat-widget.js`
 
-**File: `supabase/functions/chat/index.ts`**
+| Fix | What changes |
+|-----|-------------|
+| Remove `productLinks` reference | Delete the dead code in `executePendingActions` that tries to push to undefined `productLinks`. The `open_product` actions are already handled correctly in `onChatComplete` (line 663) where they get enriched and added to `productCards`. |
+| Fix price calculation | Remove the `/ 100` division in `enrichAction`. Use the raw price string from Shopify as-is (already in rupees). |
+| Fix welcome message | Make `sendToChat` use the same text as what's pushed to `voiceMessages`. |
 
-Change the native display prompt so the AI outputs enriched action blocks that include handle for matching:
+### File 2: `supabase/functions/chat/index.ts`
 
-```
-:::action
-type: open_product
-product_name: Product Name
-product_handle: product-handle
-:::
-```
+| Fix | What changes |
+|-----|-------------|
+| Client product price mapping | In `mapClientProducts`, the price is also divided by 100 — fix this to use the raw value since Shopify Indian stores use rupees not paise. |
 
-This is a minimal change -- the handle is already in the catalog data sent to the AI.
+### File 3: No new files needed
 
-### 2. Widget: Match action blocks against client catalog for rich data
-
-**File: `public/ai-chat-widget.js`**
-
-When `open_product` actions are extracted, look up each product in the already-fetched `shopifyCatalog` array by handle (or fuzzy name match). This gives us the full product data: image, price, compare_at_price, variants, etc.
-
-### 3. Widget: Replace plain text links with rich product cards
-
-**File: `public/ai-chat-widget.js`**
-
-Add CSS styles for product cards matching Shopify's collection page layout:
-- Product image (aspect-square)
-- Discount percentage badge (green, bottom-left of image)
-- Product name (truncated)
-- Price with strikethrough for discounted items
-- "Add to Cart" button (full-width, styled)
-- "In Cart" state with checkmark
-
-Replace the `.aicw-product-links` rendering with a 2-column grid of these cards.
-
-### 4. Widget: Wire up Add to Cart functionality
-
-Each card's "Add to Cart" button will call the existing `shopifyAddToCart()` function (which uses Shopify's `/cart/add.js` endpoint). Track which products are in cart to show the "In Cart" state.
-
-## Visual Change
-
-```text
-BEFORE (current):                    AFTER (new):
-+---------------------------+        +---------------------------+
-| GLAM Woman Perfume   [->] |        | [IMG]        | [IMG]      |
-| Luxury Collection    [->] |        | GLAM Woman   | Luxury     |
-| CEO Woman Perfume    [->] |        | Rs 599       | Rs 1299    |
-| IMPACT Man Perfume   [->] |        | [Add to Cart]| [Add to Ct]|
-| Luxury Oud Exp Set   [->] |        | [IMG]        | [IMG]      |
-+---------------------------+        | CEO Woman    | IMPACT Man |
-                                     | Rs 499       | Rs 699     |
-                                     | [Add to Cart]| [Add to Ct]|
-                                     +---------------------------+
-```
-
-## Files Changed
-
-| File | Change |
-|------|--------|
-| `supabase/functions/chat/index.ts` | Add `product_handle` to the native display prompt so AI includes handles in action blocks |
-| `public/ai-chat-widget.js` | Add product card CSS styles, catalog matching logic, rich card rendering with images/prices/buttons, and Add to Cart wiring |
-
-## How It Works End-to-End
+The product card grid CSS and rendering logic already exist and work correctly. Once the three bugs above are fixed:
 
 1. Widget opens, fetches `/products.json` from Shopify (already working)
-2. User speaks, audio goes to STT, text goes to chat backend
-3. Backend has the full catalog context, AI recommends products with handles
-4. Widget extracts `:::action` blocks, matches handles against `shopifyCatalog`
-5. Widget renders rich product cards with real images, prices from Shopify
-6. User taps "Add to Cart" -- calls Shopify's `/cart/add.js` with the variant ID
-7. Card updates to show "In Cart" state
+2. User speaks "party perfume", STT converts to text
+3. Text + full catalog sent to backend
+4. Backend filters catalog by intent (category: Perfume, occasion: party)
+5. AI picks the best matches and outputs `:::action` blocks with handles
+6. Widget's `onChatComplete` extracts actions, calls `enrichAction` to match against local catalog
+7. `productCards` array is populated with images, correct prices, variant IDs
+8. Render function displays the 2-column product grid with images, prices, discount badges, and Add to Cart buttons
 
-No new dependencies or API keys needed. The Shopify catalog fetch and cart integration already exist.
+## End-to-End Flow After Fix
 
+```text
+User speaks: "party perfume"
+       |
+       v
+STT (Sarvam AI) -> "party perfume"
+       |
+       v
+Backend receives text + 250 Shopify products
+       |
+       v
+Intent extraction: category=Perfume, occasion=party
+       |
+       v
+Filtered catalog sent to LLM (Gemini) as context
+       |
+       v
+LLM responds with product recommendations + :::action blocks
+       |
+       v
+Widget extracts actions, matches handles to local catalog
+       |
+       v
+Rich product cards rendered: images, prices (Rs 599), discount badges, Add to Cart
+```
+
+No new product card widget needed — the existing one just needs these 3 bug fixes to start working.
