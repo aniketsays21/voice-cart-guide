@@ -128,20 +128,62 @@
       padding: 4px 12px; cursor: pointer; transition: color 0.2s; flex-shrink: 0;\
     }\
     .aicw-cancel-btn:hover { color: #ef4444; border-color: #ef4444; }\
-    /* Product links list */\
-    .aicw-product-links {\
-      padding: 8px 16px; overflow-y: auto; flex: 1;\
+    /* Product cards grid */\
+    .aicw-product-grid {\
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;\
+      padding: 10px 12px; overflow-y: auto; flex: 1;\
     }\
-    .aicw-product-link-item {\
-      display: flex; align-items: center; gap: 8px; padding: 10px 12px;\
-      border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 8px;\
-      cursor: pointer; transition: background 0.2s, border-color 0.2s;\
-      text-decoration: none; color: #1a1a2e;\
+    .aicw-pcard {\
+      border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;\
+      background: #fff; display: flex; flex-direction: column;\
+      transition: box-shadow 0.2s;\
     }\
-    .aicw-product-link-item:hover { background: #f9fafb; border-color: " + primaryColor + "; }\
-    .aicw-product-link-name { flex: 1; font-size: 13px; font-weight: 500; }\
-    .aicw-product-link-price { font-size: 13px; font-weight: 700; color: " + primaryColor + "; }\
-    .aicw-product-link-item svg { width: 14px; height: 14px; color: #9ca3af; flex-shrink: 0; }\
+    .aicw-pcard:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }\
+    .aicw-pcard-img-wrap {\
+      position: relative; width: 100%; aspect-ratio: 1; background: #f3f4f6; overflow: hidden;\
+    }\
+    .aicw-pcard-img {\
+      width: 100%; height: 100%; object-fit: cover; display: block;\
+    }\
+    .aicw-pcard-badge {\
+      position: absolute; bottom: 6px; left: 6px;\
+      background: #16a34a; color: #fff; font-size: 10px; font-weight: 700;\
+      padding: 2px 6px; border-radius: 4px;\
+    }\
+    .aicw-pcard-body { padding: 8px; display: flex; flex-direction: column; gap: 4px; flex: 1; }\
+    .aicw-pcard-name {\
+      font-size: 12px; font-weight: 600; color: #1a1a2e;\
+      overflow: hidden; text-overflow: ellipsis;\
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;\
+    }\
+    .aicw-pcard-price { font-size: 13px; font-weight: 700; color: " + primaryColor + "; }\
+    .aicw-pcard-old {\
+      font-size: 11px; color: #9ca3af; text-decoration: line-through; margin-left: 4px;\
+    }\
+    .aicw-pcard-atc {\
+      width: 100%; border: none; border-radius: 8px; padding: 7px 0;\
+      font-size: 12px; font-weight: 600; cursor: pointer;\
+      transition: background 0.2s, transform 0.1s;\
+      background: " + primaryColor + "; color: #fff; margin-top: auto;\
+    }\
+    .aicw-pcard-atc:hover { filter: brightness(1.1); transform: scale(1.02); }\
+    .aicw-pcard-atc:active { transform: scale(0.98); }\
+    .aicw-pcard-atc.in-cart {\
+      background: #16a34a; pointer-events: none;\
+    }\
+    .aicw-pcard-atc.adding {\
+      background: #9ca3af; pointer-events: none;\
+    }\
+    /* Toast */\
+    .aicw-toast {\
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);\
+      background: #1a1a2e; color: #fff; padding: 8px 16px; border-radius: 8px;\
+      font-size: 12px; z-index: 99999; display: flex; align-items: center; gap: 6px;\
+      animation: aicw-toast-in 0.3s ease;\
+    }\
+    .aicw-toast svg { width: 14px; height: 14px; }\
+    .aicw-toast-out { opacity: 0; transition: opacity 0.3s; }\
+    @keyframes aicw-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }\
     /* Powered */\
     .aicw-powered {\
       text-align: center; font-size: 10px; color: #9ca3af; padding: 4px 0 8px; flex-shrink: 0;\
@@ -283,6 +325,7 @@
     var isOpen = false;
     var pendingActions = [];
     var shopifyCatalog = []; // client-fetched products
+    var inCartHandles = {}; // track handles added to cart
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -301,8 +344,8 @@
     var welcomeTriggered = false;
     var isWelcomeLoading = false;
 
-    // Product links extracted from AI responses
-    var productLinks = []; // [{name, price, link}]
+    // Product cards enriched from catalog
+    var productCards = []; // [{name, handle, link, image, price, comparePrice, variantId, available}]
 
     // Fetch catalog on init if Shopify
     if (isShopifyPlatform) {
@@ -574,24 +617,64 @@
       });
     }
 
+    function lookupCatalog(handle, name) {
+      if (!shopifyCatalog.length) return null;
+      // Match by handle first
+      if (handle) {
+        for (var i = 0; i < shopifyCatalog.length; i++) {
+          if (shopifyCatalog[i].handle === handle) return shopifyCatalog[i];
+        }
+      }
+      // Fuzzy match by name
+      if (name) {
+        var lower = name.toLowerCase();
+        for (var i = 0; i < shopifyCatalog.length; i++) {
+          if (shopifyCatalog[i].title && shopifyCatalog[i].title.toLowerCase().indexOf(lower) !== -1) return shopifyCatalog[i];
+        }
+      }
+      return null;
+    }
+
+    function enrichAction(action) {
+      var handle = action.product_handle || extractHandle(action.product_link || "");
+      var catalogProduct = lookupCatalog(handle, action.product_name);
+      var variant = catalogProduct && catalogProduct.variants && catalogProduct.variants[0];
+      var price = variant ? (parseFloat(variant.price) / 100) : 0;
+      var comparePrice = variant && variant.compare_at_price ? (parseFloat(variant.compare_at_price) / 100) : null;
+      var image = catalogProduct ? (catalogProduct.images && catalogProduct.images[0] ? (catalogProduct.images[0].src || catalogProduct.images[0]) : catalogProduct.featured_image) : null;
+      return {
+        name: action.product_name || (catalogProduct ? catalogProduct.title : "Product"),
+        handle: handle || (catalogProduct ? catalogProduct.handle : ""),
+        link: action.product_link || (handle ? "/products/" + handle : "#"),
+        image: image || "",
+        price: price,
+        comparePrice: comparePrice,
+        variantId: variant ? variant.id : null,
+        available: variant ? variant.available : true
+      };
+    }
+
     function onChatComplete(fullResponse, query) {
       voiceMessages.push({ role: "assistant", content: fullResponse });
 
-      // Extract and execute actions (which now include product links for navigation)
       var actions = extractActions(fullResponse);
-      // Collect open_product actions as product links
-      productLinks = [];
+      productCards = [];
       actions.forEach(function (action) {
         if (action.type === "open_product" && action.product_name) {
-          productLinks.push({
-            name: action.product_name,
-            link: action.product_link || "#"
-          });
+          productCards.push(enrichAction(action));
         } else if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
-            addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-              console.log("Add to cart:", result.message);
-            });
+            var enriched = enrichAction(action);
+            if (enriched.variantId) {
+              shopifyAddToCart(enriched.variantId).then(function (ok) {
+                if (ok) inCartHandles[enriched.handle] = true;
+                render();
+              });
+            } else {
+              addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+                console.log("Add to cart:", result.message);
+              });
+            }
           }
         } else if (action.type === "navigate_to_checkout") {
           if (isShopifyPlatform) shopifyGoToCheckout();
@@ -659,7 +742,7 @@
       if (welcomeTriggered) return;
       welcomeTriggered = true;
       isWelcomeLoading = true;
-      productLinks = [];
+      productCards = [];
       render();
 
       var welcomeQuery = "Hi, show me top selling Bella Vita products";
@@ -706,16 +789,28 @@
         ? '<div class="aicw-transcript">"' + voiceTranscript + '"</div>'
         : '';
 
-      // Product links section
-      var productLinksHtml = "";
-      if (productLinks.length > 0) {
-        var linksItems = productLinks.map(function (p) {
-          return '<a class="aicw-product-link-item" href="' + p.link + '" target="_self">\
-            <span class="aicw-product-link-name">' + p.name + '</span>\
-            ' + ICONS.link + '\
-          </a>';
+      // Product cards section
+      var productCardsHtml = "";
+      if (productCards.length > 0) {
+        var cardsItems = productCards.map(function (p, idx) {
+          var imgHtml = p.image ? '<div class="aicw-pcard-img-wrap"><img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" onerror="this.style.display=\'none\'"/>' : '<div class="aicw-pcard-img-wrap">';
+          // Discount badge
+          var badgeHtml = "";
+          if (p.comparePrice && p.comparePrice > p.price && p.price > 0) {
+            var discount = Math.round((1 - p.price / p.comparePrice) * 100);
+            badgeHtml = '<div class="aicw-pcard-badge">' + discount + '% OFF</div>';
+          }
+          imgHtml += badgeHtml + '</div>';
+          // Price
+          var priceHtml = p.price ? '₹' + p.price : '';
+          var oldPriceHtml = (p.comparePrice && p.comparePrice > p.price) ? '<span class="aicw-pcard-old">₹' + p.comparePrice + '</span>' : '';
+          // Button
+          var isInCart = inCartHandles[p.handle];
+          var btnClass = isInCart ? 'aicw-pcard-atc in-cart' : 'aicw-pcard-atc';
+          var btnText = isInCart ? '✓ In Cart' : 'Add to Cart';
+          return '<div class="aicw-pcard" data-card-idx="' + idx + '">' + imgHtml + '<div class="aicw-pcard-body"><div class="aicw-pcard-name">' + p.name + '</div><div class="aicw-pcard-price">' + priceHtml + oldPriceHtml + '</div><button class="' + btnClass + '" data-atc-idx="' + idx + '">' + btnText + '</button></div></div>';
         }).join("");
-        productLinksHtml = '<div class="aicw-product-links">' + linksItems + '</div>';
+        productCardsHtml = '<div class="aicw-product-grid">' + cardsItems + '</div>';
       }
 
       // Cancel button
@@ -725,13 +820,11 @@
 
       var bottomBarStatus = voiceStatusText || (voiceState === "idle" ? "Tap mic to ask..." : "");
 
-      // Layout: avatar area + optional product links + bottom bar
-      var hasProductLinks = productLinks.length > 0;
+      var hasProducts = productCards.length > 0;
 
       var bodyHtml;
-      if (hasProductLinks) {
-        // Show product links with compact bottom bar
-        bodyHtml = productLinksHtml + '\
+      if (hasProducts) {
+        bodyHtml = productCardsHtml + '\
           <div class="aicw-bottom-bar">\
             <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
             <div class="aicw-bar-info">\
@@ -740,7 +833,6 @@
             </div>' + cancelBtn + '\
           </div>';
       } else {
-        // Avatar-first layout
         bodyHtml = '\
           <div class="aicw-avatar-area">\
             <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
@@ -780,18 +872,39 @@
       var cancelEl = root.querySelector(".aicw-cancel-btn");
       if (cancelEl) cancelEl.addEventListener("click", cancelVoice);
 
-      // Bind product link clicks for Shopify native navigation
-      if (isShopifyPlatform) {
-        root.querySelectorAll(".aicw-product-link-item").forEach(function (el) {
-          el.addEventListener("click", function (e) {
-            e.preventDefault();
-            var href = el.getAttribute("href");
-            if (href && href !== "#") {
-              shopifyNavigate(href);
+      // Bind Add to Cart buttons
+      root.querySelectorAll(".aicw-pcard-atc").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var idx = parseInt(btn.getAttribute("data-atc-idx"), 10);
+          var card = productCards[idx];
+          if (!card || !card.variantId || inCartHandles[card.handle]) return;
+          btn.textContent = "Adding...";
+          btn.classList.add("adding");
+          shopifyAddToCart(card.variantId).then(function (ok) {
+            if (ok) {
+              inCartHandles[card.handle] = true;
+              btn.textContent = "✓ In Cart";
+              btn.classList.remove("adding");
+              btn.classList.add("in-cart");
+            } else {
+              btn.textContent = "Add to Cart";
+              btn.classList.remove("adding");
             }
           });
         });
-      }
+      });
+
+      // Bind product card clicks to navigate
+      root.querySelectorAll(".aicw-pcard").forEach(function (el) {
+        el.addEventListener("click", function () {
+          var idx = parseInt(el.getAttribute("data-card-idx"), 10);
+          var card = productCards[idx];
+          if (card && card.link && card.link !== "#" && isShopifyPlatform) {
+            shopifyNavigate(card.link);
+          }
+        });
+      });
 
       // Waveform
       if (voiceState === "listening" && analyserNode) startWaveform();
