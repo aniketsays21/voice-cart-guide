@@ -1,86 +1,100 @@
 
 
-# Show Real Shopify Product Collections for Category Queries
+# Click Native Shopify Buttons Instead of API Calls
 
-## Problem
-When a user asks "show me party perfumes" or "recommend beach vibes perfumes", the bot currently only describes products conversationally and asks the user to pick one. It doesn't show them on the actual Shopify store. The user wants to see 5-6 real product cards on the Shopify website.
+## Summary
 
-## Solution
-Add a new `navigate_to_search` action type that the LLM can output for category/collection queries. This will navigate the user to Shopify's native search results or collection pages, showing real product cards on the store.
+When the user is on a Product Detail Page (PDP) and says "add to cart", the bot will **find and click the native Add to Cart button** on the Shopify theme instead of calling `/cart/add.js` via API. Similarly for checkout, the existing native button click approach will be kept and improved. This makes the interaction feel like a real person is controlling the browser.
 
-## How It Works
+## What Changes
+
+### 1. Native "Add to Cart" Click (`public/ai-chat-widget.js`)
+
+Currently, `add_to_cart` action calls `addToCartByProduct()` which uses the `/cart/add.js` API. This works but doesn't interact with the actual page UI.
+
+**New approach:**
+- When on a PDP (`/products/*`), first try to click the native "Add to Cart" button using common Shopify theme selectors:
+  - `[type="submit"][name="add"]` (Dawn theme default)
+  - `button.product-form__submit`
+  - `.btn-addtocart`
+  - `form[action="/cart/add"] button[type="submit"]`
+  - `#AddToCart`
+- If the native button is found and clicked, show a success toast
+- If no native button is found (e.g., user is not on the PDP), fall back to the existing API approach (`/cart/add.js`)
+
+### 2. Improved Checkout Click (already partially done)
+
+The existing `shopifyGoToCheckout()` already tries to click native checkout buttons. We'll expand the selector list to cover more Shopify themes:
+- `[name="checkout"]`
+- `.cart__checkout-button`
+- `button[type="submit"][value*="Check"]`
+- `a[href="/checkout"]`
+- `.cart__checkout`
+- `#checkout`
+
+### 3. Context-Aware Add to Cart
+
+When the user is on a PDP and says "add this to cart" (without specifying a product name), the bot should:
+- Detect we're on `/products/*`
+- Click the native Add to Cart button directly (no need to search for the product -- it's already on screen)
+- This is the most natural flow: user browses to a product page, bot clicks the button
+
+When the user is NOT on a PDP but names a specific product, fall back to the API approach.
+
+### 4. System Prompt Update (`supabase/functions/chat/index.ts`)
+
+Add instructions telling the LLM:
+- When the user is on a product page and says "add to cart" or "isko cart mein daalo", output an `add_to_cart` action. The widget will click the native button.
+- When the user says "checkout karo" or "buy now", output `navigate_to_cart` first (if not already on cart), then `navigate_to_checkout` to click the checkout button.
+
+## Technical Details
+
+### New helper function: `clickNativeAddToCart()`
 
 ```text
-User says: "Show me party perfumes"
-     |
-     v
-LLM describes 3-5 products conversationally (voice)
-     +
-LLM outputs: :::action
-             type: navigate_to_search
-             query: party perfume
-             :::
-     |
-     v
-Widget navigates to /search?q=party+perfume
-     |
-     v
-User sees real Shopify search results (5-6 product cards)
-with the voice bot still active at the bottom
+function clickNativeAddToCart():
+  selectors = [
+    '[type="submit"][name="add"]',
+    'button.product-form__submit',
+    'form[action="/cart/add"] button[type="submit"]',
+    '#AddToCart', '.btn-addtocart',
+    'button[data-action="add-to-cart"]'
+  ]
+  for each selector:
+    btn = document.querySelector(selector)
+    if btn and btn is visible:
+      btn.click()
+      return true
+  return false
 ```
 
-## Changes
+### Updated `add_to_cart` handler logic
 
-### 1. System Prompt (`supabase/functions/chat/index.ts`)
-
-Update the floating overlay mode instructions:
-- For category/abstract queries ("party perfumes", "gifts under 1000", "beach vibes"), output a `navigate_to_search` action with a clean search query
-- The bot still describes top picks conversationally via voice, but simultaneously navigates the user to see all matching products on the store
-- For collection-specific queries, use `navigate_to_collection` if a known collection handle matches (e.g., "men's perfumes" -> `/collections/men`)
-
-New action format:
+```text
+if action.type == "add_to_cart":
+  if on /products/* page:
+    clicked = clickNativeAddToCart()
+    if clicked:
+      showToast("Added to cart!")
+      dispatch cart:refresh event
+    else:
+      fall back to API (addToCartByProduct)
+  else:
+    use API (addToCartByProduct) as before
 ```
-:::action
-type: navigate_to_search
-query: party perfume for men
-:::
-```
-
-Or for known collections:
-```
-:::action
-type: navigate_to_collection
-collection_handle: men
-:::
-```
-
-### 2. Widget Action Handler (`public/ai-chat-widget.js`)
-
-- Add handling for `navigate_to_search` action: sets `pendingNavigation = "/search?q=" + encodeURIComponent(action.query)`
-- Add handling for `navigate_to_collection` action: sets `pendingNavigation = "/collections/" + action.collection_handle`
-- Update `extractActions` to parse the new action types
-- Remove the current logic that builds a search URL from the raw user message (lines 678-688) since the LLM will now provide a clean, optimized search query
-
-### 3. Prompt Refinements
-
-The LLM prompt will instruct:
-- Single specific product query -> `open_product` (navigate to PDP) -- unchanged
-- Category/abstract query -> `navigate_to_search` with an optimized Shopify search query + conversational voice description
-- Known collection -> `navigate_to_collection` with the collection handle
-- The search query should be clean and optimized for Shopify's search (e.g., "party perfume men" not the full user sentence)
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `public/ai-chat-widget.js` | Add `navigate_to_search` and `navigate_to_collection` action handlers; remove old multi-product search fallback logic |
-| `supabase/functions/chat/index.ts` | Add new action types to system prompt with examples; instruct LLM to use `navigate_to_search` for category queries |
+| `public/ai-chat-widget.js` | Add `clickNativeAddToCart()` helper; update `add_to_cart` handler to try native click first on PDP; expand checkout button selectors |
+| `supabase/functions/chat/index.ts` | Update prompt to instruct LLM about context-aware add-to-cart and checkout flows |
 
 ## What Stays the Same
+- Search/collection navigation -- unchanged
 - Single product navigation (open_product) -- unchanged
-- Add to cart flow -- unchanged
-- Cart/checkout navigation -- unchanged
 - Voice pipeline (STT/TTS) -- unchanged
 - Session persistence -- unchanged
 - Floating bar UI -- unchanged
+- API fallback for add-to-cart when not on PDP -- unchanged
 
