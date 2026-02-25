@@ -266,7 +266,48 @@
     .aicw-toast.aicw-toast-cart {\
       background: #16a34a; font-size: 14px; padding: 12px 20px;\
     }\
-    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }";
+    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }\
+    /* In-widget PDP */\
+    .aicw-pdp { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }\
+    .aicw-pdp-img-wrap {\
+      width: 100%; aspect-ratio: 1; background: #f3f4f6; overflow: hidden; position: relative;\
+    }\
+    .aicw-pdp-img { width: 100%; height: 100%; object-fit: cover; display: block; }\
+    .aicw-pdp-badge {\
+      position: absolute; bottom: 10px; left: 10px;\
+      background: #16a34a; color: #fff; font-size: 12px; font-weight: 700;\
+      padding: 3px 8px; border-radius: 4px;\
+    }\
+    .aicw-pdp-info { padding: 16px; flex: 1; }\
+    .aicw-pdp-name { font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }\
+    .aicw-pdp-vendor { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }\
+    .aicw-pdp-price-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }\
+    .aicw-pdp-price { font-size: 22px; font-weight: 800; color: #1a1a2e; }\
+    .aicw-pdp-old-price { font-size: 14px; color: #9ca3af; text-decoration: line-through; }\
+    .aicw-pdp-desc { font-size: 13px; color: #6b7280; line-height: 1.6; margin-bottom: 16px; }\
+    .aicw-pdp-actions { display: flex; gap: 8px; }\
+    .aicw-pdp-atc {\
+      flex: 1; border: none; border-radius: 10px; padding: 12px 0;\
+      font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;\
+      color: #fff; text-transform: uppercase; letter-spacing: 0.5px;\
+    }\
+    .aicw-pdp-atc:hover { filter: brightness(1.1); transform: scale(1.02); }\
+    .aicw-pdp-atc:active { transform: scale(0.98); }\
+    .aicw-pdp-atc.in-cart { background: #16a34a; pointer-events: none; }\
+    .aicw-pdp-back {\
+      display: flex; align-items: center; gap: 4px; font-size: 12px; color: #6b7280;\
+      background: none; border: 1px solid #e5e7eb; border-radius: 999px;\
+      padding: 4px 12px; cursor: pointer; transition: color 0.2s; margin: 10px 12px 0;\
+    }\
+    .aicw-pdp-back:hover { color: #374151; border-color: #d1d5db; }\
+    /* PDP Q&A section */\
+    .aicw-pdp-qa { padding: 0 16px 12px; }\
+    .aicw-pdp-qa-label { font-size: 11px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }\
+    .aicw-pdp-qa-msg {\
+      border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 6px;\
+    }\
+    .aicw-pdp-qa-user { background: rgba(108,59,235,0.08); color: #1a1a2e; margin-left: 40px; }\
+    .aicw-pdp-qa-bot { background: #f3f4f6; color: #374151; margin-right: 20px; }";
   }
 
   // ── Shopify helpers ────────────────────────────────────────────────
@@ -445,6 +486,7 @@
     var pendingNavigation = null;
     var productCards = (savedSession && savedSession.productCards) || [];
     var showProductGrid = (savedSession && savedSession.showProductGrid) || false;
+    var activeProduct = (savedSession && savedSession.activeProduct) || null; // In-widget PDP
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -472,6 +514,7 @@
         voiceMessages: voiceMessages,
         productCards: productCards,
         showProductGrid: showProductGrid,
+        activeProduct: activeProduct,
         inCartHandles: inCartHandles,
         welcomeTriggered: welcomeTriggered
       });
@@ -864,11 +907,13 @@
         showProductGrid = true;
         persistState();
       } else if (openProductActions.length === 1) {
-        var action = openProductActions[0];
-        var handle = action.product_handle || extractHandle(action.product_link);
-        pendingNavigation = handle ? "/products/" + handle : action.product_link;
+        // Show product detail INSIDE the widget instead of navigating away
+        var singleAction = openProductActions[0];
+        var enrichedSingle = enrichAction(singleAction);
+        activeProduct = enrichedSingle;
         showProductGrid = false;
         productCards = [];
+        persistState();
       } else if (openProductActions.length === 0 && hadGrid) {
         var hasNavAction = actions.some(function (a) {
           return a.type === "navigate_to_checkout" || a.type === "navigate_to_cart";
@@ -889,9 +934,8 @@
               inCartHandles[handleToMark] = true;
               showToast(enriched.name + " added to cart! ✓", true);
               flashCard(handleToMark);
+              persistState();
               render();
-              // Navigate to cart page after adding product
-              pendingNavigation = "/cart";
             };
             if (enriched.variantId) {
               shopifyAddToCart(enriched.variantId).then(function (ok) {
@@ -1015,6 +1059,7 @@
       voiceMessages = [];
       productCards = [];
       showProductGrid = false;
+      activeProduct = null;
       inCartHandles = {};
       voiceTranscript = "";
       conversationId = null;
@@ -1102,7 +1147,48 @@
 
       var bodyHtml;
 
-      if (showProductGrid && productCards.length > 1) {
+      if (activeProduct) {
+        // ── In-widget Product Detail Page ──
+        var ap = activeProduct;
+        var apPriceHtml = '<span class="aicw-pdp-price">₹' + ap.price + '</span>';
+        if (ap.comparePrice && ap.comparePrice > ap.price) {
+          apPriceHtml += '<span class="aicw-pdp-old-price">₹' + ap.comparePrice + '</span>';
+        }
+        var apDiscountBadge = '';
+        if (ap.comparePrice && ap.comparePrice > ap.price) {
+          var apPct = Math.round(((ap.comparePrice - ap.price) / ap.comparePrice) * 100);
+          apDiscountBadge = '<span class="aicw-pdp-badge">' + apPct + '% OFF</span>';
+        }
+        var apInCart = inCartHandles[ap.handle];
+        var apAtcStyle = 'background:' + primaryColor + ';';
+        var apAtcClass = apInCart ? 'aicw-pdp-atc in-cart' : 'aicw-pdp-atc';
+        var apAtcText = apInCart ? '✓ Added to Cart' : 'Add to Cart';
+
+        var pdpWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
+
+        bodyHtml = '\
+          <button class="aicw-pdp-back aicw-pdp-back-btn">← Back</button>\
+          <div class="aicw-pdp">\
+            <div class="aicw-pdp-img-wrap">\
+              ' + (ap.image ? '<img class="aicw-pdp-img" src="' + ap.image + '" alt="' + ap.name + '" />' : '') + '\
+              ' + apDiscountBadge + '\
+            </div>\
+            <div class="aicw-pdp-info">\
+              <div class="aicw-pdp-name">' + ap.name + '</div>\
+              <div class="aicw-pdp-price-row">' + apPriceHtml + '</div>\
+              <div class="aicw-pdp-actions">\
+                <button class="' + apAtcClass + ' aicw-pdp-atc-btn" style="' + apAtcStyle + '">' + apAtcText + '</button>\
+              </div>\
+            </div>\
+          </div>\
+          <div class="aicw-bottom-bar">\
+            <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+            <div class="aicw-bar-info">\
+              <div class="aicw-bar-status">' + statusText + '</div>\
+              ' + pdpWaveformHtml + '\
+            </div>\
+          </div>';
+      } else if (showProductGrid && productCards.length > 1) {
         var cardsHtml = productCards.map(function (p, idx) {
           var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
           if (p.comparePrice && p.comparePrice > p.price) {
@@ -1189,15 +1275,60 @@
         setTimeout(startListening, 300);
       });
 
-      // Bind product card clicks
+      // Bind product card clicks — open in-widget PDP instead of navigating
       root.querySelectorAll(".aicw-pcard").forEach(function (card) {
         card.addEventListener("click", function (e) {
           if (e.target.closest("[data-atc]")) return;
           var idx = parseInt(card.getAttribute("data-idx"));
           var p = productCards[idx];
-          if (p && p.link) shopifyNavigate(p.link);
+          if (p) {
+            activeProduct = p;
+            showProductGrid = false;
+            persistState();
+            render();
+          }
         });
       });
+
+      // Bind PDP back button
+      var pdpBackBtn = root.querySelector(".aicw-pdp-back-btn");
+      if (pdpBackBtn) pdpBackBtn.addEventListener("click", function () {
+        activeProduct = null;
+        // If we had product cards, go back to grid
+        if (productCards.length > 1) {
+          showProductGrid = true;
+        }
+        persistState();
+        render();
+        if (voiceState === "idle") setTimeout(startListening, 300);
+      });
+
+      // Bind PDP add-to-cart button
+      var pdpAtcBtn = root.querySelector(".aicw-pdp-atc-btn");
+      if (pdpAtcBtn && activeProduct && !inCartHandles[activeProduct.handle]) {
+        pdpAtcBtn.addEventListener("click", function () {
+          var ap = activeProduct;
+          if (!ap) return;
+          pdpAtcBtn.textContent = "Adding...";
+          pdpAtcBtn.style.background = "#9ca3af";
+          pdpAtcBtn.style.pointerEvents = "none";
+          var doAdd = ap.variantId
+            ? shopifyAddToCart(ap.variantId)
+            : addToCartByProduct(ap.name, ap.link).then(function (r) { return r.success; });
+          doAdd.then(function (ok) {
+            if (ok) {
+              inCartHandles[ap.handle] = true;
+              showToast(ap.name + " added to cart! ✓", true);
+              persistState();
+              render();
+            } else {
+              pdpAtcBtn.textContent = "Add to Cart";
+              pdpAtcBtn.style.background = primaryColor;
+              pdpAtcBtn.style.pointerEvents = "";
+            }
+          });
+        });
+      }
 
       // Bind add to cart buttons
       root.querySelectorAll("[data-atc]").forEach(function (btn) {
