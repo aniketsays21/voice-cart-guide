@@ -1249,11 +1249,27 @@
 
     // Auto-restore: if widget was open on previous page, resume
     if (isOpen && savedSession) {
-      console.log("[AI Widget] Restoring session from previous page, page:", detectPageContext().pageType);
+      var pageCtx = detectPageContext();
+      console.log("[AI Widget] Restoring session from previous page, page:", pageCtx.pageType);
       render();
-      // If we have conversation history, start listening directly (no welcome)
       if (voiceMessages.length > 0) {
-        setTimeout(startListening, 500);
+        // Send a contextual nudge based on the new page
+        var contextNudge = null;
+        if (pageCtx.pageType === "product" && pageCtx.productHandle) {
+          contextNudge = "User has navigated to product page: " + pageCtx.productHandle + ". Briefly acknowledge this product and offer help.";
+        } else if (pageCtx.pageType === "cart") {
+          contextNudge = "User has navigated to the cart page. Briefly acknowledge and suggest checkout or add-ons.";
+        } else if (pageCtx.pageType === "checkout") {
+          contextNudge = "User is now on checkout. Briefly encourage them to complete the purchase.";
+        }
+        if (contextNudge) {
+          voiceMessages.push({ role: "user", content: contextNudge });
+          isWelcomeLoading = true;
+          render();
+          sendToChat(contextNudge);
+        } else {
+          setTimeout(startListening, 500);
+        }
       } else {
         triggerWelcome();
       }
