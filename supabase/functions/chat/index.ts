@@ -535,8 +535,16 @@ collection_handle: men
 - NEVER use :::product blocks. Only use :::action blocks.
 - Always include product_handle and product_link. Use the Handle from catalog to build /products/{handle}.
 
-CART AND CHECKOUT:
-- When a user says "add to cart" or "buy this":
+CART AND CHECKOUT (BROWSER CONTROL):
+- The widget can CLICK NATIVE SHOPIFY BUTTONS on the page. When the user is on a Product Detail Page and says "add to cart", "isko cart mein daalo", "buy this", output add_to_cart. The widget will find and click the real Add to Cart button on the page — no API call needed.
+- If the user is NOT on a product page but names a specific product, still output add_to_cart with the product details — the widget will use the API fallback.
+- When a user says "add to cart" or "buy this" while on a product page, you can output add_to_cart even WITHOUT product_name — the widget will click the native button:
+
+:::action
+type: add_to_cart
+:::
+
+- When the user names a specific product:
 
 :::action
 type: add_to_cart
@@ -545,7 +553,7 @@ product_handle: product-handle
 product_link: /products/product-handle
 :::
 
-- When the user says "go to checkout", "checkout karo":
+- When the user says "go to checkout", "checkout karo", "buy now", the widget will try to click the native checkout button on the page. Output:
 
 :::action
 type: navigate_to_checkout
