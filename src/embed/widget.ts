@@ -105,13 +105,17 @@ export function createWidget(config: WidgetConfig) {
     pendingActions = [];
 
     for (const action of actions) {
-      if (!isShopifyPlatform) continue; // Only execute on Shopify
+      if (!isShopifyPlatform) {
+        showToast("This action works on the Shopify store", "info");
+        continue;
+      }
 
       switch (action.type) {
         case "add_to_cart": {
           if (action.product_name) {
+            showToast(`Adding ${action.product_name} to cart...`, "info");
             const result = await addToCartByProduct(action.product_name, action.product_link);
-            // Append feedback as assistant message
+            showToast(result.message, result.success ? "success" : "error");
             const feedbackMsg: Msg = { role: "assistant", content: result.message };
             messages = [...messages, feedbackMsg];
             render();
@@ -120,13 +124,18 @@ export function createWidget(config: WidgetConfig) {
         }
         case "open_product": {
           const link = action.product_link;
-          if (link) shopifyNavigate(link);
+          if (link) {
+            showToast("Opening product...", "info");
+            shopifyNavigate(link);
+          }
           break;
         }
         case "navigate_to_checkout":
+          showToast("Going to checkout...", "info");
           shopifyGoToCheckout();
           break;
         case "navigate_to_cart":
+          showToast("Opening cart...", "info");
           shopifyGoToCart();
           break;
       }
@@ -152,6 +161,23 @@ export function createWidget(config: WidgetConfig) {
   const root = document.createElement("div");
   root.className = "aicw-root";
   shadow.appendChild(root);
+
+  // Toast notification system
+  function showToast(message: string, type: "success" | "info" | "error" = "info") {
+    const icons: Record<string, string> = {
+      success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
+      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+      error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+    };
+    const toast = document.createElement("div");
+    toast.className = `aicw-toast aicw-toast-${type}`;
+    toast.innerHTML = `${icons[type]}<span>${message}</span>`;
+    shadow.appendChild(toast);
+    setTimeout(() => {
+      toast.classList.add("aicw-toast-out");
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
 
   function render() {
     if (!isOpen) {
