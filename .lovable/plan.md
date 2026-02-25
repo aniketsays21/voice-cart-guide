@@ -1,106 +1,58 @@
 
 
-# Polish Bella Vita Voice Shopping Experience
+# Voice Bot UX Overhaul: Start Call / End Call Flow
 
-## Current State (What's Already Working)
+## What Changes
 
-The core voice shopping flow is built and functional:
-- Voice-first widget with avatar UI, mic, VAD, waveform
-- Sarvam AI STT/TTS integration (Hindi/English)
-- LLM-powered product recommendations from live Shopify catalog
-- Multi-product grid display with live images, prices, discount badges
-- Add to Cart from grid (both voice and tap)
-- Persistent mic bar during product browsing
-- Single product navigation to PDP
-- Checkout/cart navigation via voice
-- Auto-welcome on open with top-selling products
+The current flow auto-triggers the welcome immediately when the widget opens. The new flow adds a clear "Start" and "End Call" pattern, continuous listening, and an updated welcome message.
 
-## Gaps to Fix for a Rock-Solid Bella Vita Experience
-
-### 1. Welcome Message Reliability
-
-**Problem**: The welcome trigger sends "Hi, show me top selling Bella Vita products" as a hidden user message, but no loading skeleton is shown -- the user sees a blank avatar area with a spinner status text.
-
-**Fix** (`public/ai-chat-widget.js`):
-- During `isWelcomeLoading`, show a subtle loading animation below the avatar (3 pulsing dots) instead of just status text
-- Prevent the mic from being clickable during welcome load
-
-### 2. Voice-to-Cart Feedback Loop
-
-**Problem**: When the user says "add the first one to cart" via voice, the AI outputs an `add_to_cart` action and the cart API is called, but there's no audible confirmation -- TTS says the response, but the grid card update may not be visible if the user isn't looking.
-
-**Fix** (`public/ai-chat-widget.js`):
-- After a successful voice-triggered `add_to_cart`, show a larger, more prominent toast with a checkmark animation
-- Briefly flash the card that was added (green border pulse for 1.5s)
-
-### 3. Error Recovery
-
-**Problem**: If STT, chat, or TTS fails, the widget shows error text but doesn't auto-recover gracefully. The mic might not restart.
-
-**Fix** (`public/ai-chat-widget.js`):
-- Add a retry mechanism: on STT failure, show "Didn't catch that. Tap mic to try again" and keep mic in idle state
-- On chat error, show error message and auto-restart listening after 3 seconds
-- On TTS error, still process actions (add to cart, navigate) even if speech fails
-
-### 4. Product Grid Scroll and Empty State
-
-**Problem**: If the catalog returns products without images, cards look broken. No empty state if the AI recommends products not in the catalog.
-
-**Fix** (`public/ai-chat-widget.js`):
-- Add a placeholder background/icon for cards without images
-- If `enrichAction` returns no image and no price (product not found in catalog), show a "Product unavailable" state on the card instead of blank
-- Ensure the grid scrolls properly with more than 6 cards
-
-### 5. TTS Language Detection
-
-**Problem**: TTS always uses `target_language_code: "hi-IN"` regardless of what language the user spoke or the AI responded in.
-
-**Fix** (`public/ai-chat-widget.js`):
-- Detect if the AI response is primarily English or Hindi using a simple heuristic (percentage of Devanagari characters)
-- Pass `"en-IN"` for English responses and `"hi-IN"` for Hindi/Hinglish responses
-
-### 6. Mic Auto-Listen After Cart Action
-
-**Problem**: After adding to cart via voice (while grid is visible), the mic doesn't auto-restart. The user has to manually tap the mic again.
-
-**Fix** (`public/ai-chat-widget.js`):
-- After TTS finishes for a cart-action response, auto-start listening again (same as after product grid display)
-- This already works for product grid responses but needs to be ensured for cart-action responses too
-
-## Changes by File
-
-### `public/ai-chat-widget.js`
-
-1. **Welcome loading state**: Add pulsing dots animation below avatar during welcome load. Disable mic click during welcome.
-
-2. **Cart feedback**: After successful `add_to_cart` in `onChatComplete`, add a CSS class `aicw-pcard-just-added` to the matching card that triggers a green border flash animation. Show a larger toast.
-
-3. **Error recovery**: In `processAudio` catch handler and `sendToChat` catch handler, ensure `voiceState` resets to "idle" and offer a clear retry path. Add auto-retry after 3s for chat errors.
-
-4. **Image placeholder**: In the product grid render, if `p.image` is empty, show a styled placeholder div with a shopping bag icon instead of a broken image.
-
-5. **TTS language detection**: Before calling TTS, check response text for Hindi characters. Pass appropriate `target_language_code`.
-
-6. **Auto-listen after cart**: In `onChatComplete`, after TTS ends for non-navigation, non-grid responses (like cart confirmations), auto-start listening.
-
-### CSS additions in `getWidgetStyles`:
+## New User Journey
 
 ```text
-.aicw-pcard-just-added  -- green border pulse animation (1.5s)
-.aicw-pcard-placeholder -- grey background with centered bag icon for missing images
-.aicw-loading-dots      -- 3 pulsing dots for welcome loading
+1. User clicks "Bella Vita AI" button on Shopify
+2. Widget opens full-screen with avatar + "Start" button
+3. User taps "Start" → bot activates, speaks welcome, shows products
+4. A red "End Call" button stays visible at all times
+5. Bot continuously listens (no need to tap mic repeatedly)
+6. User speaks → AI responds → products display → add to cart works
+7. User taps "End Call" → bot stops, widget closes
 ```
 
-### `supabase/functions/chat/index.ts`
+## Changes Required
 
-No changes needed -- the system prompt and backend logic are already solid for Bella Vita.
+### File: `public/ai-chat-widget.js`
 
-## What the User Will Notice
+**1. New "pre-call" state**
+- Add a `callActive` flag (starts `false`)
+- When widget opens, show the avatar with a green "Start" button instead of auto-triggering welcome
+- Tapping "Start" sets `callActive = true`, then triggers `triggerWelcome()`
 
-- Widget opens with a smooth loading animation, then products appear
-- Speaking "add the first one" shows a satisfying cart confirmation with card highlight
-- If something goes wrong, the widget recovers gracefully and re-listens
-- Products without images don't look broken
-- TTS speaks in the correct language matching the conversation
-- The mic is always ready -- the entire journey flows without manual taps
+**2. Persistent "End Call" button**
+- Once `callActive` is true, render a red "End Call" button that is always visible on screen (both avatar view and product grid view)
+- Tapping "End Call" cancels voice, resets state, and closes the widget
+
+**3. Update welcome message**
+- Change the hidden welcome query from the current text to something that prompts the AI to say: "Welcome, I am your AI assistant. Bella Vita store par aapka swagat hai, ye rahe kuch best selling products aapke liye"
+
+**4. Continuous listening**
+- The auto-listen-after-TTS already exists. Ensure the mic restarts after every response without user intervention (this is mostly working, just verify no gaps)
+
+**5. CSS additions**
+- `.aicw-start-btn`: Large green "Start" button style
+- `.aicw-end-call-btn`: Red "End Call" button, always visible during active call
+
+### File: `supabase/functions/chat/index.ts`
+
+**6. Update welcome prompt in system prompt**
+- Adjust the `WELCOME BEHAVIOR` section to instruct the AI to say: "Welcome, I am your AI assistant. Bella Vita store par aapka swagat hai, ye rahe kuch best selling products aapke liye" and then show top selling products
+
+## Shopify Catalog Question
+
+You asked: "Do we need an API for searching the Shopify catalog?"
+
+No extra API key is needed. The widget already fetches your full live Shopify catalog using the public `/products.json` endpoint, and the backend also fetches it server-side. This works as long as the store is not password-protected (yours is live, so it works).
+
+## Deployment
+
+After these changes, you click **Publish > Update** in Lovable. No Shopify theme file edits needed -- the script auto-updates on page refresh.
 
