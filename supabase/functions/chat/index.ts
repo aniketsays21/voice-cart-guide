@@ -22,7 +22,7 @@ function validateInput(body: any): string | null {
   if (messages.length > MAX_MESSAGES) return `Too many messages (max ${MAX_MESSAGES})`;
   for (const m of messages) {
     if (!m.content || typeof m.content !== "string") return "Each message must have content";
-    if (m.content.length > MAX_MSG_LENGTH) return `Message too long (max ${MAX_MSG_LENGTH} chars)`;
+    if (m.role === "user" && m.content.length > MAX_MSG_LENGTH) return `Message too long (max ${MAX_MSG_LENGTH} chars)`;
     if (!ALLOWED_ROLES.has(m.role)) return `Invalid role: ${m.role}`;
   }
   if (sessionId && !UUID_RE.test(sessionId) && !SESSION_ID_RE.test(sessionId)) return "Invalid sessionId format";
