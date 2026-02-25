@@ -479,11 +479,8 @@
     var ttsUrl = apiUrl + "/functions/v1/sarvam-tts";
     var sessionId = generateSessionId();
     var conversationId = null;
-    var messages = [];
-    var isLoading = false;
     var isOpen = false;
     var pendingActions = [];
-    var activeTab = "chat"; // "chat" or "voice"
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -508,12 +505,11 @@
       pendingActions = [];
       actions.forEach(function (action) {
         if (!isShopifyPlatform) return;
-        switch (action.type) {
+          switch (action.type) {
           case "add_to_cart":
             if (action.product_name) {
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                messages = messages.concat([{ role: "assistant", content: result.message }]);
-                render();
+                console.log("Add to cart result:", result.message);
               });
             }
             break;
@@ -858,90 +854,21 @@
 
     function render() {
       if (!isOpen) {
-        root.innerHTML = '<button class="aicw-fab" aria-label="Open chat">' + ICONS.chat + '</button>';
+        root.innerHTML = '<button class="aicw-fab" aria-label="Talk to us">' + ICONS.mic + '</button>';
         root.querySelector(".aicw-fab").addEventListener("click", function () { isOpen = true; render(); });
         return;
       }
 
-      // Tabs HTML
-      var tabsHtml = '<div class="aicw-tabs">\
-        <button class="aicw-tab' + (activeTab === "chat" ? " active" : "") + '" data-tab="chat">' + ICONS.chat + ' Chat</button>\
-        <button class="aicw-tab' + (activeTab === "voice" ? " active" : "") + '" data-tab="voice">' + ICONS.voice + ' Voice</button>\
-      </div>';
-
-      if (activeTab === "chat") {
-        renderChatMode(tabsHtml);
-      } else {
-        renderVoiceMode(tabsHtml);
-      }
-
-      // Bind tab clicks
-      root.querySelectorAll(".aicw-tab").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          var tab = btn.getAttribute("data-tab");
-          if (tab !== activeTab) {
-            // Clean up voice if switching away
-            if (activeTab === "voice") cancelVoice();
-            activeTab = tab;
-            render();
-          }
-        });
-      });
+      renderVoiceMode();
 
       root.querySelector(".aicw-close").addEventListener("click", function () {
-        if (activeTab === "voice") cancelVoice();
+        cancelVoice();
         isOpen = false;
         render();
       });
     }
 
-    function renderChatMode(tabsHtml) {
-      var suggestionsHtml = messages.length === 0
-        ? '<div class="aicw-empty"><p>' + welcomeMessage + '</p><p style="font-size:12px;color:#9ca3af;">Tell me what you\'re looking for!</p><div class="aicw-suggestions">' + suggestions.map(function (s, i) { return '<button class="aicw-suggestion" data-idx="' + i + '">' + s + '</button>'; }).join("") + '</div></div>'
-        : "";
-
-      var messagesHtml = messages.map(function (m) {
-        var cls = m.role === "user" ? "user" : "assistant";
-        return '<div class="aicw-msg aicw-msg-' + cls + '"><div class="aicw-bubble aicw-bubble-' + cls + '">' + (m.role === "user" ? miniMarkdown(m.content) : parseContent(m.content, handleAction)) + '</div></div>';
-      }).join("");
-
-      var loadingHtml = isLoading && (!messages.length || messages[messages.length - 1].role !== "assistant")
-        ? '<div class="aicw-loading"><div class="aicw-loading-dot"><span class="aicw-dot"></span><span class="aicw-dot"></span><span class="aicw-dot"></span></div></div>'
-        : "";
-
-      root.innerHTML = '\
-        <div class="aicw-panel">\
-          <div class="aicw-header">\
-            <div class="aicw-header-title">' + ICONS.chat + '<span>' + title + '</span></div>\
-            <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
-          </div>' + tabsHtml + '\
-          <div class="aicw-messages">' + suggestionsHtml + messagesHtml + loadingHtml + '<div class="aicw-scroll-anchor"></div></div>\
-          <div class="aicw-input-area">\
-            <textarea class="aicw-textarea" placeholder="Type a message..." rows="1"></textarea>\
-            <button class="aicw-send" aria-label="Send"' + (isLoading ? " disabled" : "") + '>' + ICONS.send + '</button>\
-          </div>\
-          <div class="aicw-powered">Powered by AI</div>\
-        </div>';
-
-      var anchor = root.querySelector(".aicw-scroll-anchor");
-      if (anchor) anchor.scrollIntoView({ behavior: "smooth" });
-
-      var textarea = root.querySelector(".aicw-textarea");
-      var sendBtn = root.querySelector(".aicw-send");
-      if (textarea) textarea.focus();
-
-      var doSend = function () { var v = textarea ? textarea.value.trim() : ""; if (v) send(v); };
-      if (sendBtn) sendBtn.addEventListener("click", doSend);
-      if (textarea) textarea.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
-      });
-
-      root.querySelectorAll(".aicw-suggestion").forEach(function (btn) {
-        btn.addEventListener("click", function () { send(btn.textContent || ""); });
-      });
-    }
-
-    function renderVoiceMode(tabsHtml) {
+    function renderVoiceMode() {
       // Products grid
       var productsHtml = "";
       if (voiceProducts.length > 0) {
@@ -968,9 +895,9 @@
       root.innerHTML = '\
         <div class="aicw-panel">\
           <div class="aicw-header">\
-            <div class="aicw-header-title">' + ICONS.voice + '<span>' + title + '</span></div>\
+            <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
             <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
-          </div>' + tabsHtml + '\
+          </div>\
           <div class="aicw-voice-area">' +
             productsHtml +
             welcomeHtml +
@@ -997,90 +924,6 @@
       if (voiceState === "listening" && analyserNode) {
         startWaveform();
       }
-    }
-
-    function send(text) {
-      if (!text.trim() || isLoading) return;
-      var userMsg = { role: "user", content: text.trim() };
-      messages = messages.concat([userMsg]);
-      isLoading = true;
-      render();
-
-      var assistantSoFar = "";
-
-      fetch(chatUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-        body: JSON.stringify({
-          messages: messages.map(function (m) { return { role: m.role, content: m.content }; }),
-          sessionId: sessionId,
-          conversationId: conversationId,
-          storeId: storeId
-        })
-      }).then(function (resp) {
-        var convIdHeader = resp.headers.get("X-Conversation-Id");
-        if (convIdHeader && !conversationId) conversationId = convIdHeader;
-
-        if (!resp.ok) {
-          return resp.json().catch(function () { return { error: "Something went wrong" }; }).then(function (err) {
-            messages = messages.concat([{ role: "assistant", content: err.error || "Sorry, something went wrong." }]);
-            isLoading = false;
-            render();
-          });
-        }
-
-        var reader = resp.body.getReader();
-        var decoder = new TextDecoder();
-        var textBuffer = "";
-
-        function upsert(chunk) {
-          assistantSoFar += chunk;
-          var last = messages[messages.length - 1];
-          if (last && last.role === "assistant") {
-            messages = messages.map(function (m, i) { return i === messages.length - 1 ? { role: m.role, content: assistantSoFar } : m; });
-          } else {
-            messages = messages.concat([{ role: "assistant", content: assistantSoFar }]);
-          }
-          render();
-        }
-
-        function pump() {
-          return reader.read().then(function (result) {
-            if (result.done) {
-              isLoading = false;
-              render();
-              executePendingActions();
-              return;
-            }
-            textBuffer += decoder.decode(result.value, { stream: true });
-            var newlineIndex;
-            while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-              var line = textBuffer.slice(0, newlineIndex);
-              textBuffer = textBuffer.slice(newlineIndex + 1);
-              if (line.endsWith("\r")) line = line.slice(0, -1);
-              if (!line.startsWith("data: ")) continue;
-              var jsonStr = line.slice(6).trim();
-              if (jsonStr === "[DONE]") break;
-              try {
-                var parsed = JSON.parse(jsonStr);
-                var content = parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content;
-                if (content) upsert(content);
-              } catch (e) {
-                textBuffer = line + "\n" + textBuffer;
-                break;
-              }
-            }
-            return pump();
-          });
-        }
-
-        return pump();
-      }).catch(function (e) {
-        console.error("AI Chat Widget error:", e);
-        messages = messages.concat([{ role: "assistant", content: "Connection error. Please try again." }]);
-        isLoading = false;
-        render();
-      });
     }
 
     render();
