@@ -363,13 +363,25 @@ const Chat: React.FC = () => {
       {/* Active listening/processing with no results yet */}
       {!hasResults && continuousListening && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
-          <VoiceButton isListening={state === "listening"} onToggle={stopEverything} />
-          <AudioWaveform stream={activeStream} isActive={state === "listening"} barCount={32} className="max-w-[240px] mx-auto" />
-          {isProcessing && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-xs">{state === "transcribing" ? "Processing..." : "Searching..."}</span>
+          {state === "listening" ? (
+            <>
+              <VoiceButton isListening={true} onToggle={stopEverything} />
+              <AudioWaveform stream={activeStream} isActive={true} barCount={32} className="max-w-[240px] mx-auto" />
+            </>
+          ) : isProcessing ? (
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">
+                {state === "transcribing" ? "Processing your voice..." : "Finding products for you..."}
+              </p>
+              <button onClick={stopEverything} className="text-xs text-muted-foreground underline hover:text-foreground transition-colors">
+                Cancel
+              </button>
             </div>
+          ) : (
+            <VoiceButton isListening={false} onToggle={startRecording} />
           )}
         </div>
       )}
