@@ -331,7 +331,83 @@ const Chat: React.FC = () => {
     if (audioRef.current) audioRef.current.pause();
   };
 
-  const showHero = state === "idle" && resultGroups.length === 0;
+  const [isWelcomeLoading, setIsWelcomeLoading] = useState(true);
+  const welcomeSentRef = useRef(false);
+
+  // Auto-trigger welcome message on mount
+  useEffect(() => {
+    if (welcomeSentRef.current) return;
+    welcomeSentRef.current = true;
+    
+    const triggerWelcome = async () => {
+      const welcomePrompt = "Hi, show me top selling Bella Vita products";
+      setLastQuery(welcomePrompt);
+      setState("searching");
+
+      const userMsg: Msg = { role: "user", content: welcomePrompt };
+      let assistantSoFar = "";
+
+      try {
+        const resp = await fetch(CHAT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: welcomePrompt }],
+            sessionId, conversationId,
+          }),
+        });
+
+        const convIdHeader = resp.headers.get("X-Conversation-Id");
+        if (convIdHeader && !conversationId) setConversationId(convIdHeader);
+
+        if (!resp.ok) { setState("idle"); setIsWelcomeLoading(false); return; }
+
+        const reader = resp.body!.getReader();
+        const decoder = new TextDecoder();
+        let textBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          textBuffer += decoder.decode(value, { stream: true });
+          let newlineIndex: number;
+          while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+            let line = textBuffer.slice(0, newlineIndex);
+            textBuffer = textBuffer.slice(newlineIndex + 1);
+            if (line.endsWith("\r")) line = line.slice(0, -1);
+            if (!line.startsWith("data: ")) continue;
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr === "[DONE]") break;
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) assistantSoFar += content;
+            } catch {}
+          }
+        }
+
+        const { products: parsed, commentary } = parseProducts(assistantSoFar);
+        const actions = parseActions(assistantSoFar);
+        const newGroup: ResultGroup = { query: "Welcome", commentary, products: parsed };
+
+        setResultGroups([newGroup]);
+        setMessages([userMsg, { role: "assistant", content: assistantSoFar }]);
+        setState("results");
+        setIsWelcomeLoading(false);
+
+        if (actions.length > 0) handleActions(actions, parsed);
+        if (commentary) playTTS(commentary);
+      } catch (e) {
+        console.error("Welcome message error:", e);
+        setState("idle");
+        setIsWelcomeLoading(false);
+      }
+    };
+
+    triggerWelcome();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const showHero = state === "idle" && resultGroups.length === 0 && !isWelcomeLoading;
   const hasResults = resultGroups.length > 0;
   const isProcessing = state === "transcribing" || state === "searching";
 
@@ -352,6 +428,19 @@ const Chat: React.FC = () => {
         </div>
       </div>
       <CartDrawer open={cartOpen} onOpenChange={setCartOpen} />
+
+      {/* Welcome loading state */}
+      {isWelcomeLoading && !hasResults && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
+          <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+          <div className="text-center">
+            <h2 className="text-lg font-semibold text-foreground">Welcome to Bella Vita</h2>
+            <p className="text-sm text-muted-foreground mt-1">Connecting to your shopping assistant...</p>
+          </div>
+        </div>
+      )}
 
       {/* HERO: idle with no results, not listening */}
       {showHero && !continuousListening && (
