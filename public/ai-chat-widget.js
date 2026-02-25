@@ -1,6 +1,6 @@
 /**
  * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
- * v2.2 — Auto-start flow, no Start/End call buttons
+ * v2.3 — Fix: show product grid immediately after chat response
  */
 (function () {
   "use strict";
@@ -755,6 +755,7 @@
           var enriched = enrichAction(action);
           productCards.push(enriched);
         });
+        showProductGrid = true;
       } else if (openProductActions.length === 1) {
         var action = openProductActions[0];
         var handle = action.product_handle || extractHandle(action.product_link);
@@ -817,6 +818,10 @@
         render();
         setTimeout(startListening, 500);
         return;
+      }
+      // Show product grid immediately (don't wait for TTS to finish)
+      if (productCards.length > 1) {
+        render();
       }
 
       setVoiceState("speaking", "Speaking...");
