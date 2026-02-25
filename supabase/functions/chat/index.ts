@@ -208,8 +208,8 @@ function mapClientProducts(clientProducts: any[], storeDomain: string): any[] {
   const storeUrl = storeDomain.startsWith("http") ? storeDomain : `https://${storeDomain}`;
   return clientProducts.map((p: any) => {
     const firstVariant = p.variants?.[0];
-    const price = firstVariant ? parseFloat(String(firstVariant.price)) / 100 : 0;
-    const compareAtPrice = firstVariant?.compare_at_price ? parseFloat(String(firstVariant.compare_at_price)) / 100 : null;
+    const price = firstVariant ? parseFloat(String(firstVariant.price)) : 0;
+    const compareAtPrice = firstVariant?.compare_at_price ? parseFloat(String(firstVariant.compare_at_price)) : null;
     const image = p.images?.[0]?.src || p.images?.[0] || p.featured_image || null;
     const handle = p.handle || "";
     const link = `${storeUrl}/products/${handle}`;

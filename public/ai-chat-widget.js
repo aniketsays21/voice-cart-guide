@@ -369,15 +369,7 @@
             }
             break;
           case "open_product":
-            // Collect as product link instead of navigating immediately
-            if (action.product_name) {
-              productLinks.push({
-                name: action.product_name,
-                link: action.product_link || "#",
-                price: ""
-              });
-              render();
-            }
+            // Handled in onChatComplete via enrichAction + productCards
             break;
           case "navigate_to_checkout":
             shopifyGoToCheckout();
@@ -639,8 +631,8 @@
       var handle = action.product_handle || extractHandle(action.product_link || "");
       var catalogProduct = lookupCatalog(handle, action.product_name);
       var variant = catalogProduct && catalogProduct.variants && catalogProduct.variants[0];
-      var price = variant ? (parseFloat(variant.price) / 100) : 0;
-      var comparePrice = variant && variant.compare_at_price ? (parseFloat(variant.compare_at_price) / 100) : null;
+      var price = variant ? parseFloat(variant.price) : 0;
+      var comparePrice = variant && variant.compare_at_price ? parseFloat(variant.compare_at_price) : null;
       var image = catalogProduct ? (catalogProduct.images && catalogProduct.images[0] ? (catalogProduct.images[0].src || catalogProduct.images[0]) : catalogProduct.featured_image) : null;
       return {
         name: action.product_name || (catalogProduct ? catalogProduct.title : "Product"),
@@ -747,7 +739,7 @@
 
       var welcomeQuery = "Hi, show me top selling Bella Vita products";
       voiceMessages.push({ role: "user", content: welcomeQuery });
-      sendToChat("Welcome");
+      sendToChat(welcomeQuery);
     }
 
     // ── Render ────────────────────────────────────────────────────
