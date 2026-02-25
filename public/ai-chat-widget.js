@@ -1,6 +1,6 @@
 /**
  * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
- * v2.1 — Auto-start flow, no Start/End call buttons
+ * v2.2 — Auto-start flow, no Start/End call buttons
  */
 (function () {
   "use strict";
