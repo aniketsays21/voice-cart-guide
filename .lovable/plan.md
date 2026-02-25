@@ -1,99 +1,106 @@
 
 
-# End-to-End Voice Shopping Journey: Discovery to Checkout
+# Polish Bella Vita Voice Shopping Experience
 
-## Problem
+## Current State (What's Already Working)
 
-Currently, when the widget displays the product grid, the microphone button disappears. The user loses the ability to speak and must click "Back" to return to the avatar view before they can talk again. This breaks the conversational shopping flow.
+The core voice shopping flow is built and functional:
+- Voice-first widget with avatar UI, mic, VAD, waveform
+- Sarvam AI STT/TTS integration (Hindi/English)
+- LLM-powered product recommendations from live Shopify catalog
+- Multi-product grid display with live images, prices, discount badges
+- Add to Cart from grid (both voice and tap)
+- Persistent mic bar during product browsing
+- Single product navigation to PDP
+- Checkout/cart navigation via voice
+- Auto-welcome on open with top-selling products
 
-## Solution
+## Gaps to Fix for a Rock-Solid Bella Vita Experience
 
-Keep the mic button visible at all times -- even when the product grid is showing. The user can browse products visually AND continue speaking voice commands simultaneously, creating a seamless journey from discovery to checkout.
+### 1. Welcome Message Reliability
 
-```text
-User opens widget
-       |
-       v
-"Show me party perfumes"  -->  AI speaks + shows product grid
-       |                            (mic stays visible at bottom)
-       v
-"Add the first one to cart"  -->  AI identifies product, adds to cart
-       |                            (grid stays, card updates to "In Cart")
-       v
-"Show me something cheaper"  -->  AI picks new products, grid refreshes
-       |
-       v
-"Add CEO Man to cart"  -->  Adds specific product by name
-       |
-       v
-"Go to checkout"  -->  Navigates to /checkout
-```
+**Problem**: The welcome trigger sends "Hi, show me top selling Bella Vita products" as a hidden user message, but no loading skeleton is shown -- the user sees a blank avatar area with a spinner status text.
+
+**Fix** (`public/ai-chat-widget.js`):
+- During `isWelcomeLoading`, show a subtle loading animation below the avatar (3 pulsing dots) instead of just status text
+- Prevent the mic from being clickable during welcome load
+
+### 2. Voice-to-Cart Feedback Loop
+
+**Problem**: When the user says "add the first one to cart" via voice, the AI outputs an `add_to_cart` action and the cart API is called, but there's no audible confirmation -- TTS says the response, but the grid card update may not be visible if the user isn't looking.
+
+**Fix** (`public/ai-chat-widget.js`):
+- After a successful voice-triggered `add_to_cart`, show a larger, more prominent toast with a checkmark animation
+- Briefly flash the card that was added (green border pulse for 1.5s)
+
+### 3. Error Recovery
+
+**Problem**: If STT, chat, or TTS fails, the widget shows error text but doesn't auto-recover gracefully. The mic might not restart.
+
+**Fix** (`public/ai-chat-widget.js`):
+- Add a retry mechanism: on STT failure, show "Didn't catch that. Tap mic to try again" and keep mic in idle state
+- On chat error, show error message and auto-restart listening after 3 seconds
+- On TTS error, still process actions (add to cart, navigate) even if speech fails
+
+### 4. Product Grid Scroll and Empty State
+
+**Problem**: If the catalog returns products without images, cards look broken. No empty state if the AI recommends products not in the catalog.
+
+**Fix** (`public/ai-chat-widget.js`):
+- Add a placeholder background/icon for cards without images
+- If `enrichAction` returns no image and no price (product not found in catalog), show a "Product unavailable" state on the card instead of blank
+- Ensure the grid scrolls properly with more than 6 cards
+
+### 5. TTS Language Detection
+
+**Problem**: TTS always uses `target_language_code: "hi-IN"` regardless of what language the user spoke or the AI responded in.
+
+**Fix** (`public/ai-chat-widget.js`):
+- Detect if the AI response is primarily English or Hindi using a simple heuristic (percentage of Devanagari characters)
+- Pass `"en-IN"` for English responses and `"hi-IN"` for Hindi/Hinglish responses
+
+### 6. Mic Auto-Listen After Cart Action
+
+**Problem**: After adding to cart via voice (while grid is visible), the mic doesn't auto-restart. The user has to manually tap the mic again.
+
+**Fix** (`public/ai-chat-widget.js`):
+- After TTS finishes for a cart-action response, auto-start listening again (same as after product grid display)
+- This already works for product grid responses but needs to be ensured for cart-action responses too
 
 ## Changes by File
 
-### 1. Widget: `public/ai-chat-widget.js`
+### `public/ai-chat-widget.js`
 
-**Layout Change -- Add mic to product grid view:**
-- When `showProductGrid` is true, render the product grid BUT also show a compact mic button bar at the bottom (below the grid)
-- The mic button will be smaller (40px) and positioned in a bottom bar alongside a status text
-- This allows the user to tap mic and speak while viewing products
+1. **Welcome loading state**: Add pulsing dots animation below avatar during welcome load. Disable mic click during welcome.
 
-**Voice command handling in product grid context:**
-- When the user speaks while the product grid is visible, the grid stays visible during processing/speaking
-- After the AI responds, update the grid if new products are recommended, or keep the same grid if the action was "add to cart"
-- Only hide the grid if the AI response has zero `open_product` actions (meaning the conversation moved away from product browsing)
+2. **Cart feedback**: After successful `add_to_cart` in `onChatComplete`, add a CSS class `aicw-pcard-just-added` to the matching card that triggers a green border flash animation. Show a larger toast.
 
-**Contextual voice commands the AI already supports (via system prompt):**
-- "Add [product name] to cart" -- triggers `add_to_cart` action, grid stays, card updates
-- "Show me more" or "something cheaper" -- triggers new `open_product` actions, grid refreshes
-- "Go to checkout" / "Open cart" -- navigates away
-- "Tell me about [product]" -- single product, navigates to PDP
+3. **Error recovery**: In `processAudio` catch handler and `sendToChat` catch handler, ensure `voiceState` resets to "idle" and offer a clear retry path. Add auto-retry after 3s for chat errors.
 
-**Specific code changes:**
+4. **Image placeholder**: In the product grid render, if `p.image` is empty, show a styled placeholder div with a shopping bag icon instead of a broken image.
 
-1. **Render function**: When `showProductGrid` is true, add a bottom bar with a compact mic button below the product grid, similar to the avatar view's mic but smaller
-2. **onChatComplete**: When a new response comes in while the grid is showing:
-   - If new `open_product` actions exist, refresh `productCards` and keep grid visible
-   - If only `add_to_cart` actions, keep current grid, update the relevant card to "In Cart"
-   - If no product actions (pure conversation), hide grid and return to avatar view
-3. **Bind mic events** on the compact mic button in the product grid view
-4. **Add bottom bar CSS** for the compact mic in grid view (`.aicw-grid-bar`)
+5. **TTS language detection**: Before calling TTS, check response text for Hindi characters. Pass appropriate `target_language_code`.
 
-### 2. Backend: `supabase/functions/chat/index.ts`
+6. **Auto-listen after cart**: In `onChatComplete`, after TTS ends for non-navigation, non-grid responses (like cart confirmations), auto-start listening.
 
-**Update system prompt** to add awareness of the conversational shopping journey:
-
-- Add instructions for handling follow-up commands like "add the first one", "add CEO Man", "show me cheaper options"
-- When the user says "add [product name] to cart", the AI should output an `add_to_cart` action block with the product name and handle
-- When the user asks for more/different products, output new `open_product` action blocks
-- When the user says "checkout" or "go to cart", output the appropriate navigation action
-
-### 3. Visual Flow
-
-| State | What User Sees | Mic Available? |
-|-------|---------------|----------------|
-| Initial | Avatar + large mic | Yes |
-| Listening | Avatar pulsing + waveform | Yes (active) |
-| Processing | Avatar + spinner | No (processing) |
-| Speaking | Avatar pulsing | No (speaking) |
-| Product Grid | 2-column cards + small mic at bottom | Yes |
-| Grid + Listening | Cards + mic active (red) + waveform | Yes (active) |
-| Grid + Processing | Cards + spinner in mic area | No (processing) |
-| Grid + Speaking | Cards + speaking indicator | No (speaking) |
-
-### 4. New CSS Additions
+### CSS additions in `getWidgetStyles`:
 
 ```text
-.aicw-grid-bar
-  - Fixed at bottom of panel, above "Powered by AI"
-  - Contains: status text + compact mic button (40px)
-  - Background: white with top border
-  - Compact waveform canvas when listening
+.aicw-pcard-just-added  -- green border pulse animation (1.5s)
+.aicw-pcard-placeholder -- grey background with centered bag icon for missing images
+.aicw-loading-dots      -- 3 pulsing dots for welcome loading
 ```
 
-### 5. What Changes for the User
+### `supabase/functions/chat/index.ts`
 
-Before: Speak -> See products -> Click "Back" -> Speak again -> Repeat
-After: Speak -> See products -> Speak again (mic is right there) -> Products update -> Speak "add to cart" -> Done -> "Checkout" -> Navigated
+No changes needed -- the system prompt and backend logic are already solid for Bella Vita.
 
-The entire journey from discovery to checkout happens through continuous voice conversation without ever needing to leave the product view.
+## What the User Will Notice
+
+- Widget opens with a smooth loading animation, then products appear
+- Speaking "add the first one" shows a satisfying cart confirmation with card highlight
+- If something goes wrong, the widget recovers gracefully and re-listens
+- Products without images don't look broken
+- TTS speaks in the correct language matching the conversation
+- The mic is always ready -- the entire journey flows without manual taps
+
