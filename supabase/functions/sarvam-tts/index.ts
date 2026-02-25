@@ -32,8 +32,8 @@ async function checkRateLimit(supabase: any, sessionId: string, functionName: st
 // Select ElevenLabs voice based on language
 function selectVoice(langCode: string): string {
   // Hindi-friendly multilingual voices
-  if (langCode === "hi-IN") return "EXAVITQu4vr4xnSDxMaL"; // Sarah - multilingual
-  return "EXAVITQu4vr4xnSDxMaL"; // Sarah - works well for English and Hindi both
+  if (langCode === "hi-IN") return "pFZP5JQG7iQjIQuC4Bku"; // Lily - better Hindi pronunciation
+  return "pFZP5JQG7iQjIQuC4Bku"; // Lily - great for Hinglish with multilingual v2
 }
 
 Deno.serve(async (req) => {
@@ -81,15 +81,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Limit text to 500 chars for TTS
-    const truncatedText = text.slice(0, 500);
+    // Limit text to 1000 chars for TTS (increased for longer Hinglish responses)
+    const truncatedText = text.slice(0, 1000);
     const langCode = target_language_code || "en-IN";
     const voiceId = selectVoice(langCode);
 
     console.log(`TTS: lang=${langCode}, voice=${voiceId}, textLen=${truncatedText.length}`);
 
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
       {
         method: "POST",
         headers: {
@@ -100,10 +100,11 @@ Deno.serve(async (req) => {
           text: truncatedText,
           model_id: "eleven_multilingual_v2",
           voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.3,
+            stability: 0.4,
+            similarity_boost: 0.8,
+            style: 0.4,
             use_speaker_boost: true,
+            speed: 0.95,
           },
         }),
       }
