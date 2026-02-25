@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Chat Widget — Embed Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 60px auto; padding: 0 20px; color: #333; }
+    h1 { color: #1a1a2e; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+    code { font-family: 'Fira Code', monospace; }
+    .tag { color: #6c3beb; }
+  </style>
+</head>
+<body>
+  <h1>🤖 AI Chat Widget — Embed Demo</h1>
+  <p>This page demonstrates the embeddable widget. Look at the bottom-right corner!</p>
+
+  <h2>Method 1: Script Tag Attributes</h2>
+  <pre><code>&lt;script src="https://your-cdn.com/ai-chat-widget.js"
+  data-store-id="<span class="tag">my-store</span>"
+  data-api-url="<span class="tag">https://your-project.supabase.co</span>"
+  data-api-key="<span class="tag">your-anon-key</span>"
+  data-primary-color="<span class="tag">#6c3beb</span>"
+  data-title="<span class="tag">Shopping Assistant</span>"
+&gt;&lt;/script&gt;</code></pre>
+
+  <h2>Method 2: Global Config Object</h2>
+  <pre><code>&lt;script&gt;
+  window.AIChatConfig = {
+    storeId: '<span class="tag">my-store</span>',
+    apiUrl: '<span class="tag">https://your-project.supabase.co</span>',
+    apiKey: '<span class="tag">your-anon-key</span>',
+    primaryColor: '<span class="tag">#e63946</span>',
+    title: '<span class="tag">My Store Helper</span>',
+    welcomeMessage: '👋 Welcome! How can I help?',
+    suggestions: ['Show me deals', 'Track my order'],
+    position: 'bottom-right',
+  };
+&lt;/script&gt;
+&lt;script src="https://your-cdn.com/ai-chat-widget.js"&gt;&lt;/script&gt;</code></pre>
+
+  <h2>Programmatic API</h2>
+  <pre><code>// Open / close / destroy
+window.AIChatWidget.open();
+window.AIChatWidget.close();
+window.AIChatWidget.destroy();</code></pre>
+
+  <!-- Load widget with global config -->
+  <script>
+    window.AIChatConfig = {
+      storeId: 'demo-store',
+      apiUrl: 'https://cjgyelmkjgwgwbwydddz.supabase.co',
+      apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ3llbG1ramd3Z3did3lkZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MjUzNzUsImV4cCI6MjA4NzUwMTM3NX0.pdf-BL2W6o4PFsiPjXYjanDWCEswWpt6SZoSqS86-sU',
+      primaryColor: '#e63946',
+      title: 'Demo Store Assistant',
+      welcomeMessage: '👋 Welcome to the demo! Try asking me about products.',
+      suggestions: ['Show me electronics', 'Best deals today', 'मुझे फोन चाहिए'],
+    };
+  </script>
+</body>
+</html>
