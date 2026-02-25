@@ -21,24 +21,124 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch products and discounts for context
+    // --- Smart Intent Extraction from conversation ---
+    const lastUserMsg = messages[messages.length - 1]?.content?.toLowerCase() || "";
+    const allUserText = messages
+      .filter((m: any) => m.role === "user")
+      .map((m: any) => m.content.toLowerCase())
+      .join(" ");
+
+    // Category detection
+    const categoryKeywords: Record<string, string[]> = {
+      Perfume: ["perfume", "fragrance", "scent", "cologne", "smell", "spray"],
+      Attar: ["attar", "itr", "traditional fragrance"],
+      Skincare: ["skincare", "skin", "face wash", "body wash", "sunscreen", "detan", "face mask", "moisturizer", "lotion"],
+      "Gift Set": ["gift", "combo", "set", "hamper", "pack"],
+      "Shower Gel": ["shower gel", "body wash", "bath"],
+      Cosmetics: ["cosmetic", "makeup", "hair powder", "kajal", "lipstick"],
+    };
+
+    const detectedCategories: string[] = [];
+    for (const [category, keywords] of Object.entries(categoryKeywords)) {
+      if (keywords.some((kw) => lastUserMsg.includes(kw) || allUserText.includes(kw))) {
+        detectedCategories.push(category);
+      }
+    }
+
+    // Price/budget detection
+    const priceMatch = lastUserMsg.match(/(?:under|below|within|less than|upto|up to|budget)\s*(?:rs\.?|₹|inr)?\s*(\d+)/i)
+      || lastUserMsg.match(/(?:rs\.?|₹|inr)\s*(\d+)/i);
+    const maxBudget = priceMatch ? parseInt(priceMatch[1]) : null;
+
+    // Gender detection
+    const genderKeywords = {
+      men: ["for men", "men's", "male", "masculine", "him", "boyfriend", "husband"],
+      women: ["for women", "women's", "female", "feminine", "her", "girlfriend", "wife"],
+      unisex: ["unisex", "anyone", "all"],
+    };
+    let detectedGender: string | null = null;
+    for (const [gender, keywords] of Object.entries(genderKeywords)) {
+      if (keywords.some((kw) => lastUserMsg.includes(kw))) {
+        detectedGender = gender;
+        break;
+      }
+    }
+
+    // Occasion/use-case keywords to highlight in search
+    const occasionKeywords = ["party", "date", "office", "daily", "casual", "wedding", "gift", "travel", "gym", "summer", "winter"];
+    const detectedOccasions = occasionKeywords.filter((kw) => lastUserMsg.includes(kw));
+
+    // --- Database-level filtering ---
+    let productQuery = supabase.from("products").select("*");
+
+    if (detectedCategories.length === 1) {
+      productQuery = productQuery.eq("category", detectedCategories[0]);
+    } else if (detectedCategories.length > 1) {
+      productQuery = productQuery.in("category", detectedCategories);
+    }
+
+    // We fetch with a higher limit, then apply price filter after discount calculation
     const [{ data: products }, { data: discounts }] = await Promise.all([
-      supabase.from("products").select("*").limit(50),
+      productQuery.limit(50),
       supabase.from("discounts").select("*").eq("is_active", true),
     ]);
 
-    const productCatalog = (products || [])
+    // Build enriched catalog with sale prices and filtering
+    const enrichedProducts = (products || []).map((p: any) => {
+      const applicableDiscounts = (discounts || []).filter(
+        (d: any) => d.product_id === p.id || d.applicable_category === p.category
+      );
+      const bestDiscount = applicableDiscounts.sort(
+        (a: any, b: any) => b.discount_percent - a.discount_percent
+      )[0];
+      const salePrice = bestDiscount
+        ? Math.round(p.price * (1 - bestDiscount.discount_percent / 100))
+        : p.price;
+      return { ...p, salePrice, bestDiscount };
+    });
+
+    // Apply budget filter on effective sale price
+    const filteredProducts = maxBudget
+      ? enrichedProducts.filter((p: any) => p.salePrice <= maxBudget)
+      : enrichedProducts;
+
+    // Apply gender filter via tags/name/description
+    const genderFiltered = detectedGender && detectedGender !== "unisex"
+      ? filteredProducts.filter((p: any) => {
+          const text = `${p.name} ${p.description || ""} ${(p.tags || []).join(" ")}`.toLowerCase();
+          if (detectedGender === "men") return text.includes("men") || text.includes("man") || text.includes("unisex") || text.includes("him");
+          if (detectedGender === "women") return text.includes("women") || text.includes("woman") || text.includes("unisex") || text.includes("her");
+          return true;
+        })
+      : filteredProducts;
+
+    // Use gender-filtered if it has results, otherwise fall back to price-filtered
+    const finalProducts = genderFiltered.length > 0 ? genderFiltered : filteredProducts;
+
+    // If filters returned nothing, fall back to full catalog
+    const catalogProducts = finalProducts.length > 0 ? finalProducts : enrichedProducts;
+
+    const productCatalog = catalogProducts
       .map((p: any) => {
-        const applicableDiscounts = (discounts || []).filter(
-          (d: any) =>
-            d.product_id === p.id || d.applicable_category === p.category
-        );
-        const bestDiscount = applicableDiscounts.sort(
-          (a: any, b: any) => b.discount_percent - a.discount_percent
-        )[0];
-        return `- ${p.name} | ₹${p.price} | Category: ${p.category || "General"} | Rating: ${p.rating}/5 | ID: ${p.id}${bestDiscount ? ` | Discount: ${bestDiscount.discount_percent}% off (code: ${bestDiscount.coupon_code})` : ""} | Link: ${p.external_link}`;
+        const lines = [
+          `- ${p.name} | MRP: ₹${p.price}${p.salePrice < p.price ? ` | Sale Price: ₹${p.salePrice}` : ""} | Category: ${p.category || "General"} | Rating: ${p.rating}/5 | ID: ${p.id}`,
+        ];
+        if (p.description) lines.push(`  Description: ${p.description.replace(/<[^>]*>/g, "").substring(0, 200)}`);
+        if (p.tags && p.tags.length > 0) lines.push(`  Tags: ${p.tags.join(", ")}`);
+        if (p.bestDiscount) lines.push(`  Discount: ${p.bestDiscount.discount_percent}% off (code: ${p.bestDiscount.coupon_code})`);
+        lines.push(`  Link: ${p.external_link}`);
+        return lines.join("\n");
       })
-      .join("\n");
+      .join("\n\n");
+
+    // Build search context summary for the AI
+    const searchContext = [
+      detectedCategories.length > 0 ? `Category filter: ${detectedCategories.join(", ")}` : null,
+      maxBudget ? `Budget: under ₹${maxBudget}` : null,
+      detectedGender ? `Gender preference: ${detectedGender}` : null,
+      detectedOccasions.length > 0 ? `Occasion: ${detectedOccasions.join(", ")}` : null,
+      `Products matched: ${catalogProducts.length} of ${(products || []).length} total`,
+    ].filter(Boolean).join(" | ");
 
     const systemPrompt = `You are a friendly, helpful AI voice shopping assistant. You help users discover and buy products. You speak English and Hindi — always respond in the same language the user uses.
 
@@ -48,8 +148,18 @@ IMPORTANT - VOICE OUTPUT RULES:
 - Do NOT use *, #, _, ~, >, |, [], (), {}, or any markdown syntax in your commentary text.
 - Numbers and currency symbols like ₹ are fine.
 
-AVAILABLE PRODUCTS:
-${productCatalog || "No products available yet."}
+SEARCH CONTEXT (pre-filtered for this query):
+${searchContext}
+
+MATCHING PRODUCTS (filtered from database):
+${productCatalog || "No products match the current filters."}
+
+SMART MATCHING INSTRUCTIONS:
+- Products above have already been pre-filtered by category, budget, and gender when the user specified them.
+- When comparing prices, ALWAYS use the Sale Price (discounted price) if available, not MRP.
+- Match user intent against product Description and Tags for deeper relevance: scent notes (sandalwood, musk, jasmine), ingredients (aloe vera, charcoal), skin type, occasion.
+- Prioritize bestsellers and higher-rated products when multiple options match.
+- If the filtered list is small, recommend the best matches. If empty, say honestly that nothing matches their criteria and suggest alternatives from what you have.
 
 INSTRUCTIONS:
 - Understand the user's needs through conversation (budget, preferences, use case)
