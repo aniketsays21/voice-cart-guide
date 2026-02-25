@@ -1,72 +1,106 @@
 
 
-# Live Shopify Product Catalog Integration
+# Bella Vita AI - Avatar Experience + Shopify Product Cards
 
 ## Overview
 
-Replace the database-stored product catalog with live products fetched directly from your Shopify store (`bella-vita-test.myshopify.com`). The AI will recommend products that are actually in your Shopify store with correct images, prices, and availability.
+Redesign the `/chat` page into an immersive AI assistant experience. When the user taps "Bella Vita AI" in the bottom nav, they land on a page with a talking avatar that greets them. Products only appear after the AI mentions them -- until then, the avatar is front and center.
 
-## How It Works
+## Key Changes
+
+### 1. Talking Avatar Component (`src/components/assistant/TalkingAvatar.tsx`)
+
+A new animated avatar that serves as the visual presence of the AI:
+
+- Circular avatar with a pulsing glow effect when the AI is "speaking"
+- Animated mouth/wave visualization synced to TTS audio playback
+- Three states: **idle** (subtle breathing animation), **speaking** (active lip-sync pulse + glow), **listening** (shows the user's audio waveform instead)
+- Uses a placeholder avatar image (a stylized AI assistant icon) -- can be replaced with a real 3D model later
+- Greeting text displayed below: "Hi! I'm your Bella Vita assistant"
+
+### 2. Redesigned Chat Page (`src/pages/Chat.tsx`)
+
+Split into two visual phases:
+
+**Phase 1 - Avatar Mode (initial)**
+- Full-screen avatar centered on the page
+- AI auto-greets with TTS: "Hello! Welcome to Bella Vita. Let me show you our best selling products"
+- While greeting plays, avatar shows speaking animation
+- Voice button at the bottom for the user to respond
+- No products visible yet
+
+**Phase 2 - Products Mode (after AI responds with products)**
+- Avatar shrinks to a small floating circle at the top
+- Product grid appears below (Shopify-style cards)
+- Avatar still animates when AI speaks
+- Voice bar at the bottom for continued conversation
+
+The transition happens when the AI response contains `:::product` blocks.
+
+### 3. Shopify-Style Product Cards (`src/components/assistant/ShopifyProductCard.tsx`)
+
+A new product card component that exactly matches the Shopify collection page style used on the Index page:
+
+- Product image with aspect-square ratio
+- "Bestseller" badge (top-left, gold) for high-rated products
+- Discount percentage badge (bottom-left, green)
+- Category label (small uppercase text)
+- Product name (truncated)
+- Star rating with "Verified" badge
+- Price with strikethrough for discounted items
+- "Add to Cart" button (full-width, dark background, uppercase)
+- "In Cart" state with checkmark
+
+This matches the exact card layout already used in `Index.tsx` (lines 130-214), ensuring visual consistency.
+
+### 4. Updated ProductResults (`src/components/assistant/ProductResults.tsx`)
+
+- Replace the current product card rendering with the new `ShopifyProductCard` component
+- Keep the 2-column grid layout
+- Products fetched from Shopify will display with live prices and images
+
+### 5. Auto-Greeting Flow
+
+Current behavior: sends "Hi, show me top selling Bella Vita products" silently on mount.
+
+New behavior:
+1. Page opens -- avatar appears with idle animation
+2. After 500ms, AI greeting TTS plays: "Hello! Welcome to Bella Vita"
+3. Avatar shows speaking animation during TTS
+4. Simultaneously, the welcome API call fires to fetch products
+5. When products arrive AND TTS finishes, avatar shrinks up and products slide in from below
+6. Voice button activates for user interaction
+
+## Visual Layout
 
 ```text
-User speaks --> Chat Edge Function --> Fetches products from Shopify --> AI recommends --> Widget shows live products
-                                         |
-                                         v
-                               bella-vita-test.myshopify.com/products.json
+Phase 1 (Greeting):                Phase 2 (Products):
++------------------+               +------------------+
+|                  |               | [small avatar]   |
+|                  |               | "Results for..." |
+|    [AVATAR]      |               +------------------+
+|   (speaking)     |               | [card] | [card]  |
+|                  |               | [card] | [card]  |
+|  "Hello! I'm    |               | [card] | [card]  |
+|   your Bella     |               |                  |
+|   Vita asst."    |               +------------------+
+|                  |               | [mic] [waveform] |
+|    [MIC BTN]     |               +------------------+
++------------------+
 ```
 
-## Changes
-
-### 1. Chat Edge Function (`supabase/functions/chat/index.ts`)
-
-**Replace database product fetching with Shopify API calls:**
-
-- Fetch products from `https://bella-vita-test.myshopify.com/products.json` (Shopify's public JSON API, no API key needed)
-- Parse Shopify product format (variants, images, prices) into the same catalog format the AI already uses
-- Cache the Shopify catalog for 5 minutes (same as current database cache)
-- Handle pagination (Shopify returns 30 products per page by default, will fetch up to 250 per page and paginate for all 400-500 products)
-- Product links will use the actual Shopify URLs (`https://bella-vita-test.myshopify.com/products/handle`)
-- Fall back to database products if Shopify fetch fails
-
-**Specific changes:**
-- New `fetchShopifyProducts()` function that calls `/products.json?limit=250` and paginates
-- New `mapShopifyProduct()` function that converts Shopify product format to internal format (name, price, image, category/type, tags, link)
-- Update `getCachedCatalog()` to use Shopify fetch first, database as fallback
-- Store URL stored as a constant (later moved to a stores table for multi-tenant)
-
-### 2. Widget Product Card Enrichment (`src/embed/widget.ts`)
-
-**When running on Shopify, enrich product cards with live data:**
-
-- When parsing `:::product` blocks, extract the product handle from the link
-- Call `/products/{handle}.js` (relative URL, works because widget is on Shopify) to get live price and image
-- Replace card data with live Shopify data before rendering
-- Fallback: if enrichment fails, show the data the AI provided
-
-### 3. Shopify Utilities (`src/embed/shopify.ts`)
-
-**Add product fetching function:**
-
-- `fetchProductByHandle(handle)` -- already partially exists for variant fetching, extend to return full product data (images, price, compare_at_price, availability)
-
-### 4. System Prompt Update
-
-- Update product link format to use Shopify URLs: `https://bella-vita-test.myshopify.com/products/{handle}`
-- Add store domain reference so the AI generates correct links
-
-## What This Means
-
-- The AI will show your actual Shopify products with real images, prices, and availability
-- No need to manually sync products between database and Shopify
-- When you add/remove products in Shopify, the AI picks them up automatically (within 5 minutes due to caching)
-- Add-to-cart, open product, and checkout actions will work with correct product handles
-- The database products table stays as a fallback but is no longer the primary source
-
-## Files Modified
+## Files
 
 | File | Change |
 |------|--------|
-| `supabase/functions/chat/index.ts` | Fetch products from Shopify API instead of database |
-| `src/embed/widget.ts` | Enrich product cards with live Shopify data |
-| `src/embed/shopify.ts` | Add `fetchProductByHandle()` with full product data |
+| `src/components/assistant/TalkingAvatar.tsx` | **New** - Animated avatar component with idle/speaking/listening states |
+| `src/components/assistant/ShopifyProductCard.tsx` | **New** - Shopify-style product card matching Index.tsx design |
+| `src/pages/Chat.tsx` | **Modified** - Two-phase layout (avatar first, then products), auto-greeting with TTS |
+| `src/components/assistant/ProductResults.tsx` | **Modified** - Use ShopifyProductCard instead of inline card markup |
 
+## Technical Notes
+
+- The avatar is CSS-animated (no heavy 3D library needed). It uses radial gradients, scale transforms, and opacity transitions to simulate a speaking effect
+- TTS audio playback is detected via the `HTMLAudioElement.onplay` and `onended` events to toggle the avatar's speaking state
+- The phase transition (avatar to products) uses a CSS transition with `transform` and `opacity` for a smooth slide-up effect
+- Product data comes from Shopify via the existing chat edge function integration (already implemented)
