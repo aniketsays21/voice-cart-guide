@@ -1,77 +1,72 @@
 
 
-# Voice Agent Actions with Visual Feedback on Shopify
+# Live Shopify Product Catalog Integration
 
-## What Changes
+## Overview
 
-The voice agent will execute real Shopify actions (add to cart, open product, checkout, apply discount) when the user speaks commands, AND show visual toast notifications so the user sees what's happening.
+Replace the database-stored product catalog with live products fetched directly from your Shopify store (`bella-vita-test.myshopify.com`). The AI will recommend products that are actually in your Shopify store with correct images, prices, and availability.
 
-## Current State
+## How It Works
 
-The system prompt already instructs the AI to output `:::action` blocks for commands like "add to cart", "open product", "go to checkout", etc. The widget already parses these actions and executes them via Shopify's AJAX API (`/cart/add.js`, `/products/handle.js`, etc.).
-
-**Problem**: There's no visual feedback. The add-to-cart result is only logged to `console.log`. The user has no idea the action happened.
-
-## What Will Work After This Change
-
-| Voice Command | Action | Visual Feedback |
-|---|---|---|
-| "Add [product] to cart" | Calls Shopify `/cart/add.js` | Toast: "Product added to cart!" with green check |
-| "Open [product]" | Navigates to product page | Toast: "Opening product..." |
-| "Go to checkout" | Redirects to `/checkout` | Toast: "Going to checkout..." |
-| "Show my cart" | Redirects to `/cart` | Toast: "Opening cart..." |
-| "Buy [product]" | Add to cart + go to checkout | Toast sequence |
-| "Tell me about [product]" | AI responds with product info | Voice response plays |
-
-## Technical Changes
-
-### File: `public/ai-chat-widget.js`
-
-**1. Add Toast Notification CSS**
-
-New styles for a toast notification that slides in from the top of the overlay:
-- `.aicw-toast` -- fixed position toast with icon, message, and auto-dismiss animation
-- Success (green), info (blue), and error (red) variants
-- Auto-fades out after 3 seconds
-
-**2. Add `showToast(message, type)` function**
-
-Creates a temporary toast element in the shadow DOM that auto-removes after 3 seconds. Types: "success", "info", "error".
-
-**3. Update `executePendingActions()` with visual feedback**
-
-Currently:
-```javascript
-case "add_to_cart":
-  addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-    console.log("Add to cart result:", result.message);
-  });
+```text
+User speaks --> Chat Edge Function --> Fetches products from Shopify --> AI recommends --> Widget shows live products
+                                         |
+                                         v
+                               bella-vita-test.myshopify.com/products.json
 ```
 
-New behavior:
-```javascript
-case "add_to_cart":
-  showToast("Adding " + action.product_name + " to cart...", "info");
-  addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-    if (result.success) {
-      showToast(result.message, "success");
-    } else {
-      showToast(result.message, "error");
-    }
-  });
-```
+## Changes
 
-Same pattern for all action types -- show a toast before navigation actions.
+### 1. Chat Edge Function (`supabase/functions/chat/index.ts`)
 
-**4. Remove the `if (!isShopifyPlatform) return` guard for feedback**
+**Replace database product fetching with Shopify API calls:**
 
-Currently, actions silently fail on non-Shopify. Instead, show a toast saying "This action works on the Shopify store" so the user at least gets feedback during testing.
+- Fetch products from `https://bella-vita-test.myshopify.com/products.json` (Shopify's public JSON API, no API key needed)
+- Parse Shopify product format (variants, images, prices) into the same catalog format the AI already uses
+- Cache the Shopify catalog for 5 minutes (same as current database cache)
+- Handle pagination (Shopify returns 30 products per page by default, will fetch up to 250 per page and paginate for all 400-500 products)
+- Product links will use the actual Shopify URLs (`https://bella-vita-test.myshopify.com/products/handle`)
+- Fall back to database products if Shopify fetch fails
 
-**5. Update Shopify cart count after add-to-cart**
+**Specific changes:**
+- New `fetchShopifyProducts()` function that calls `/products.json?limit=250` and paginates
+- New `mapShopifyProduct()` function that converts Shopify product format to internal format (name, price, image, category/type, tags, link)
+- Update `getCachedCatalog()` to use Shopify fetch first, database as fallback
+- Store URL stored as a constant (later moved to a stores table for multi-tenant)
 
-After a successful add-to-cart, dispatch `cart:refresh` event AND update `[data-cart-count]` elements (already partially implemented in `shopify.ts`, will be inlined into the widget since it's a standalone IIFE).
+### 2. Widget Product Card Enrichment (`src/embed/widget.ts`)
 
-### No Backend Changes Needed
+**When running on Shopify, enrich product cards with live data:**
 
-The AI chat function already has the correct action prompt format. The Shopify APIs (`/cart/add.js`, `/products/handle.js`) are native Shopify endpoints that work automatically when the widget runs on a Shopify store.
+- When parsing `:::product` blocks, extract the product handle from the link
+- Call `/products/{handle}.js` (relative URL, works because widget is on Shopify) to get live price and image
+- Replace card data with live Shopify data before rendering
+- Fallback: if enrichment fails, show the data the AI provided
+
+### 3. Shopify Utilities (`src/embed/shopify.ts`)
+
+**Add product fetching function:**
+
+- `fetchProductByHandle(handle)` -- already partially exists for variant fetching, extend to return full product data (images, price, compare_at_price, availability)
+
+### 4. System Prompt Update
+
+- Update product link format to use Shopify URLs: `https://bella-vita-test.myshopify.com/products/{handle}`
+- Add store domain reference so the AI generates correct links
+
+## What This Means
+
+- The AI will show your actual Shopify products with real images, prices, and availability
+- No need to manually sync products between database and Shopify
+- When you add/remove products in Shopify, the AI picks them up automatically (within 5 minutes due to caching)
+- Add-to-cart, open product, and checkout actions will work with correct product handles
+- The database products table stays as a fallback but is no longer the primary source
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `supabase/functions/chat/index.ts` | Fetch products from Shopify API instead of database |
+| `src/embed/widget.ts` | Enrich product cards with live Shopify data |
+| `src/embed/shopify.ts` | Add `fetchProductByHandle()` with full product data |
 
