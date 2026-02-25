@@ -1,100 +1,80 @@
 
-# Native Shopify Actions via Voice Widget
+
+# Deploy AI Chat Widget to Your Shopify Store
 
 ## Overview
 
-When embedded on a Shopify store, the widget will perform **real Shopify actions** -- adding products to the store's actual cart, navigating to product pages, and redirecting to checkout -- all triggered by voice or text commands.
+Here's the complete end-to-end process to get your AI assistant live on your Shopify website. No Shopify API keys needed -- the widget uses Shopify's built-in public APIs automatically.
 
-## What Will Work After This
+---
 
-| Voice Command | Action |
-|---|---|
-| "Add this to cart" | Calls Shopify's `/cart/add.js` API -- item appears in the store's real cart |
-| "Show me more about X" | Navigates the browser to the product's PDP page on the store |
-| "Go to checkout" | Redirects to `/checkout` |
-| "Open my cart" | Redirects to `/cart` |
+## Step-by-Step Process
 
-## How It Works
+### Step 1: Build the Widget Bundle
 
-The AI already returns structured action blocks like:
+I'll add a build script to `package.json` so you can easily generate the widget file. Then you run:
 
-```text
-:::action
-type: add_to_cart
-product_name: Product Name
-:::
+```
+npm run build:widget
 ```
 
-Right now the widget ignores these. The plan is to **parse and execute them as real Shopify actions** on the host page.
+This creates a single file: `dist-widget/ai-chat-widget.js`
 
-## Technical Details
+### Step 2: Host the File
 
-### 1. Add Shopify Platform Detection (`src/embed/widget.ts`)
+**Easiest option -- use your Shopify store itself:**
 
-- Detect if the widget is running on a Shopify store by checking for `window.Shopify` (Shopify injects this global on all stores).
-- When on Shopify, use native APIs. When not on Shopify, fall back to the current behavior (internal cart + external links).
+1. In your Shopify Admin, go to **Settings -> Files**
+2. Click **Upload files** and upload the `ai-chat-widget.js` file
+3. Shopify gives you a CDN URL like: `https://cdn.shopify.com/s/files/1/xxxx/xxxx/files/ai-chat-widget.js`
+4. Copy that URL -- you'll need it in the next step
 
-### 2. Add Shopify Action Handlers (`src/embed/shopify.ts` -- new file)
+### Step 3: Add the Script to Your Shopify Theme
 
-Create a small module with these functions:
+1. In Shopify Admin, go to **Online Store -> Themes**
+2. Click **"..." -> Edit code** on your active theme
+3. Open the file `theme.liquid` (under Layout)
+4. Paste this code just **before** the closing `</body>` tag:
 
-- **`shopifyAddToCart(variantId, quantity)`** -- POST to `/cart/add.js` with the variant ID. This adds the item to the store's real cart and shows Shopify's native cart notification.
-- **`shopifyNavigate(url)`** -- `window.location.href = url` to navigate to a PDP or collection page.
-- **`shopifyGoToCheckout()`** -- Redirect to `/checkout`.
-- **`shopifyGoToCart()`** -- Redirect to `/cart`.
-
-### 3. Parse Action Blocks in Widget (`src/embed/widget.ts`)
-
-- Extend the `parseContent` function to detect `:::action` blocks (in addition to `:::product` blocks).
-- When an action is detected:
-  - `add_to_cart` -- Match the product name to a product card already shown, extract the Shopify product handle/link, call `/cart/add.js`.
-  - `open_product` -- Navigate to the product's URL on the store.
-
-### 4. Enrich Product Data for Shopify (`src/embed/types.ts`)
-
-- Add optional `variantId` and `handle` fields to product cards so the widget knows which Shopify variant to add.
-- The AI system prompt already includes product links. For Shopify stores, these links contain the product handle (e.g., `/products/bella-vita-perfume`), which can be used to fetch the variant ID via Shopify's `/products/{handle}.js` endpoint.
-
-### 5. Update AI System Prompt (`supabase/functions/chat/index.ts`)
-
-- Add a new action type `navigate_to_checkout` and `navigate_to_cart` to the system prompt so the AI can trigger those actions via voice.
-- Ensure the `add_to_cart` action includes the product link so the widget can resolve it to a Shopify variant.
-
-### 6. Config Extension (`src/embed/types.ts`)
-
-- Add an optional `platform` field to `WidgetConfig`: `"shopify" | "generic"`.
-- Auto-detect via `window.Shopify` if not specified.
-
-### Flow Diagram
-
-```text
-User speaks "Add this to cart"
-        |
-        v
-  AI returns :::action type: add_to_cart
-        |
-        v
-  Widget parses action block
-        |
-        v
-  Is Shopify? ──Yes──> Extract handle from product link
-        |                      |
-        No                     v
-        |              GET /products/{handle}.js
-        v                      |
-  Internal cart                v
-  (current behavior)   POST /cart/add.js (variant_id)
-                               |
-                               v
-                    Item in real Shopify cart
+```html
+<script
+  src="YOUR_CDN_URL_FROM_STEP_2"
+  data-store-id="your-store-name"
+  data-api-url="https://cjgyelmkjgwgwbwydddz.supabase.co"
+  data-api-key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ3llbG1ramd3Z3did3lkZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MjUzNzUsImV4cCI6MjA4NzUwMTM3NX0.pdf-BL2W6o4PFsiPjXYjanDWCEswWpt6SZoSqS86-sU"
+  data-title="Bella Vita Assistant"
+  data-primary-color="#6c3beb"
+></script>
 ```
 
-### Files Changed
+5. Click **Save**
+
+### Step 4: Done -- It's Live!
+
+Visit your Shopify store. You'll see the chat bubble in the bottom-right corner. The widget automatically:
+- Detects it's on Shopify (via `window.Shopify`)
+- Uses Shopify's native `/cart/add.js` for "add to cart" commands
+- Navigates to real product pages on your store
+- Handles checkout/cart redirects
+
+---
+
+## What I'll Change in Code
 
 | File | Change |
 |---|---|
-| `src/embed/shopify.ts` | New -- Shopify Cart API + navigation helpers |
-| `src/embed/widget.ts` | Parse `:::action` blocks, call Shopify handlers |
-| `src/embed/types.ts` | Add `platform`, `variantId`, `handle` fields |
-| `src/embed/index.ts` | Pass platform config, auto-detect Shopify |
-| `supabase/functions/chat/index.ts` | Add checkout/cart navigation actions to prompt |
+| `package.json` | Add `"build:widget"` script for convenience |
+
+This is a one-line change to make building easier. Everything else is already implemented.
+
+---
+
+## Checklist Before Going Live
+
+- Build the widget: `npm run build:widget`
+- Upload `dist-widget/ai-chat-widget.js` to Shopify Files
+- Paste the script tag in `theme.liquid` before `</body>`
+- Replace `YOUR_CDN_URL_FROM_STEP_2` with the actual Shopify CDN URL
+- Replace `your-store-name` with your actual store identifier
+- Visit your store and test the chat bubble
+
