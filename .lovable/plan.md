@@ -1,81 +1,84 @@
 
+Problem confirmed from logs and current code behavior:
 
-# Fix: Voice Bot Stuck at "Listening..." - Not Processing Input
+1) The voice pipeline is reaching the backend, but STT is failing.
+- Backend logs repeatedly show: `Sarvam STT error: 400 - Failed to read the file, please check the audio format`.
+- This means mic capture is happening, but the uploaded audio container/metadata is being rejected before transcription.
 
-## Problem Identified
+2) Yes, something changed vs earlier behavior.
+- The widget now sends `audioMimeType: blob.type` from the browser.
+- On Chrome this is often `audio/webm;codecs=opus` (with codec suffix).
+- Backend currently forwards that type as-is, which can produce parser rejection on STT side in some cases.
 
-After investigating, I found **two issues** causing the bot to get stuck:
+3) “Chrome is not asking mic permission now” is usually expected.
+- Browsers only prompt once per site unless permission is reset.
+- So missing popup does not mean mic is not being accessed.
+- Your screenshot state (“Listening...”) indicates getUserMedia is succeeding.
 
-### Issue 1: Published Version is Outdated
-The live script on your Shopify store (`voice-cart-guide.lovable.app/ai-chat-widget.js`) is still the **old version** (1023 lines). Your project has the new version (1216 lines) with the Start/End Call flow, but it was **never published**. You need to click **Publish > Update** in Lovable.
+4) There is one workflow regression to fix too:
+- In the current widget API, `open()` still calls `triggerWelcome()` immediately.
+- That bypasses the intended Start button flow and can make voice state transitions harder to reason about.
 
-### Issue 2: Recording Pipeline Bug (processAudio)
-Even in the new code, the `processAudio` function does NOT send the `audioMimeType` to the STT backend. The STT backend hardcodes `audio/webm` for all recordings. On Safari/iOS, browsers record in `audio/mp4`, which causes Sarvam AI to reject the audio silently.
+Implementation plan to fix this permanently:
 
-Additionally, when STT returns an empty transcript or fails, the bot shows "Didn't catch that" but does NOT auto-restart listening -- it just sits there, requiring a manual mic tap. Since this is a "continuous listening" bot, it should auto-retry.
+Phase 1 — Stabilize audio format handling (highest priority)
+- File: `public/ai-chat-widget.js`
+  - Add a MIME normalization helper before STT request:
+    - Any `*webm*` => `audio/webm`
+    - Any `*ogg*` => `audio/ogg`
+    - Any `*mp4*` / `*m4a*` / `*aac*` => `audio/mp4`
+    - fallback => `audio/webm`
+  - Send both:
+    - `audioMimeType` (normalized)
+    - `audioMimeTypeRaw` (original `blob.type`) for diagnostics
+  - Keep the existing auto-retry, but only after explicit STT error parsing so we don’t silently loop without insight.
+  - Add short debug logs in widget:
+    - selected recorder mime
+    - blob mime + size
+    - normalized mime sent to STT
 
-## Fixes
+- File: `supabase/functions/sarvam-stt/index.ts`
+  - Sanitize incoming MIME (`lowercase`, strip `;codecs=...`).
+  - Add lightweight container sniffing from first bytes:
+    - WebM/Matroska signature
+    - OGG signature
+    - MP4 `ftyp`
+  - If sniffed type differs from client MIME, prefer sniffed type.
+  - Build file extension from resolved MIME (`.webm`, `.ogg`, `.mp4`).
+  - Add controlled logging:
+    - `audioMimeTypeRaw`, normalized MIME, sniffed MIME, payload byte length.
+  - Return clearer JSON errors for frontend retry decisions.
 
-### File 1: `public/ai-chat-widget.js`
+Phase 2 — Restore the intended Start/End call UX contract
+- File: `public/ai-chat-widget.js`
+  - Update `open()` so it only opens UI, not auto-start welcome.
+  - Keep welcome trigger only behind explicit Start button action.
+  - This ensures clear user gesture flow and predictable mic lifecycle.
 
-**Fix processAudio to send audioMimeType:**
-- Pass `blob.type` (e.g., `audio/webm`, `audio/mp4`) in the STT request body as `audioMimeType`
-- This lets the backend use the correct MIME type when forwarding to Sarvam AI
+Phase 3 — Improve “stuck listening” resilience
+- File: `public/ai-chat-widget.js`
+  - Add max recording timeout safeguard (e.g., auto-stop at 8–10s) if VAD never detects silence.
+  - On repeated STT format failures (e.g., 2 consecutive), show explicit message:
+    - “Audio format issue detected, retrying with compatible mode…”
+  - Optional compatibility fallback:
+    - If available, try alternate recorder MIME order once (e.g., ogg/webm/mp4 preference by support).
 
-**Fix auto-retry on empty transcript:**
-- When STT returns empty/no transcript, auto-restart listening after 1.5 seconds instead of staying stuck at "idle"
-- When STT errors out, also auto-restart listening
+Phase 4 — Verification checklist (must pass before publish)
+1. End-to-end flow on Chrome desktop:
+   - Open widget → Start → welcome spoken → user speaks → transcript processed → response spoken.
+2. Confirm no STT 400 “Failed to read file” errors in backend logs.
+3. Verify add-to-cart voice action still works.
+4. Repeat on Android Chrome and iPhone Safari.
+5. Confirm Start/End call behavior remains consistent and no auto-start on open.
 
-**Fix auto-retry on STT network error:**
-- Same auto-restart behavior on catch block
+Technical notes and expected outcome:
+- Root cause is not “mic permission missing”; it’s a format-compatibility break in STT upload metadata/packaging.
+- After normalization + backend MIME sniffing, STT should return transcripts again instead of 400s.
+- After `open()` fix, the UX will match your requested workflow exactly.
 
-### File 2: `supabase/functions/sarvam-stt/index.ts`
-
-**Accept and use audioMimeType from request:**
-- Read `audioMimeType` from the request body
-- Use it when creating the Blob for Sarvam API (instead of hardcoded `audio/webm`)
-- Derive the correct file extension (`.webm`, `.mp4`, `.ogg`) from the MIME type
-- Fall back to `audio/webm` / `.webm` if not provided
-
-## Technical Details
-
-### Widget changes (processAudio function):
-```javascript
-// Before:
-body: JSON.stringify({ audio: base64, sessionId: sessionId })
-
-// After:
-body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: blob.type || "audio/webm" })
-```
-
-### Widget changes (auto-retry on empty transcript):
-```javascript
-// Before:
-setVoiceState("idle", "Didn't catch that. Tap mic to try again.");
-return;
-
-// After:
-setVoiceState("idle", "Didn't catch that. Listening again...");
-setTimeout(startListening, 1500);
-return;
-```
-
-### STT function changes:
-```typescript
-// Before:
-formData.append("file", new Blob([binaryAudio], { type: "audio/webm" }), "recording.webm");
-
-// After:
-const mimeType = audioMimeType || "audio/webm";
-const ext = mimeType.includes("mp4") ? ".mp4" : mimeType.includes("ogg") ? ".ogg" : ".webm";
-formData.append("file", new Blob([binaryAudio], { type: mimeType }), "recording" + ext);
-```
-
-## Deployment
-
-After these changes:
-1. Click **Publish > Update** in Lovable
-2. Hard-refresh the Shopify store page (Ctrl+Shift+R) to bypass cached script
-3. If the old version still loads, add `?v=2` to the script URL in your Shopify theme.liquid (one-time edit)
-4. **No other Shopify file changes needed**
-
+What I will implement immediately after approval:
+1) MIME normalization + diagnostics in widget
+2) MIME sanitization + container sniffing in backend STT function
+3) `open()` no-auto-welcome fix
+4) max-recording timeout safety
+5) final end-to-end validation steps
