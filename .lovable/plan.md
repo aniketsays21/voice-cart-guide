@@ -1,87 +1,94 @@
 
-Goal: make the Shopify experience match your expectation: opening “Bella Vita AI” should show the talking avatar flow, recommendations should come from your live Shopify catalog (not old data), and products should be shown using Shopify-native storefront UI instead of custom cards.
 
-What I found from the current implementation:
-1. The avatar experience you approved exists in the app route `/chat` (React page), not in the Shopify embed script path.
-2. Shopify storefront is currently loading `public/ai-chat-widget.js`, which is a separate, older widget code path.
-3. Backend logs show `Shopify fetch failed: 401` and then `Fetched 0 products from Shopify`, so chat falls back to old database products (that is why you see old responses).
-4. Because of (2) and (3), you are seeing old behavior on Shopify even after publish.
+# Rich Shopify Product Cards in the Widget
 
-Implementation approach:
+## Problem
 
-Phase 1: Fix data source so recommendations are truly from Shopify
-- Update chat backend function to stop relying on one hardcoded store URL only.
-- Pass the actual storefront domain from widget request (example: current Shopify hostname) and use that for catalog retrieval.
-- Handle 401 explicitly:
-  - If storefront is protected, use authenticated Shopify catalog access path (storefront token path) or return a clear fallback mode.
-- Keep existing database fallback only as last resort and only when Shopify is unavailable.
-- Add clear logging so we can confirm: selected store domain, fetch status, product count, fallback reason.
+When the AI recommends products, they appear as plain text links (just product names with an arrow icon). The user wants full product cards matching the Shopify collection page style -- with images, prices, discount badges, ratings, and Add to Cart buttons.
 
-Why this phase first:
-- Without fixing catalog retrieval, UI changes still show old/incorrect products.
+## Root Cause
 
-Phase 2: Move Shopify to “native storefront display” mode (no custom product cards)
-- Update widget behavior so it does not render custom recommendation cards.
-- Keep AI as conversation + voice layer.
-- For product display, route user to Shopify-native pages:
-  - product pages (`/products/{handle}`),
-  - cart (`/cart`),
-  - checkout (`/checkout`),
-  - and searchable result pages (`/search?q=...&type=product`) for multi-product recommendations.
-- AI still recommends multiple products, but actual browsing is shown via native Shopify UI/components.
+Two issues working together:
 
-Why this matches your request:
-- Recommendations still come from AI.
-- Product browsing/presentation is Shopify-native, not custom widget cards.
+1. **System prompt (native mode)** tells the AI to NOT use `:::product` blocks and only use `:::action` blocks, which contain just a name and link -- no image, price, or other data.
+2. **Widget render function** displays these actions as simple `<a>` text links with no visual richness.
 
-Phase 3: Bring avatar experience into Shopify flow
-- Add an “avatar-first open state” in the Shopify widget flow:
-  - On opening Bella Vita AI, show talking model first.
-  - Auto-greet immediately.
-  - Keep voice agent behavior unchanged.
-  - Once assistant says it is showing best sellers, transition to Shopify-native result navigation (instead of custom cards).
-- Preserve current mic/listening/speaking loop.
+The Shopify catalog IS being fetched client-side (into `shopifyCatalog`), but it's never used for display -- only sent to the backend for AI context.
 
-Phase 4: Fix delivery mismatch so Shopify always gets latest changes
-- Unify embed build path so Shopify script is generated from the current source of truth.
-- Ensure published script URL serves updated widget code.
-- Add cache-busting strategy for Shopify theme script include (version query) so old JS is not reused.
+## Solution
 
-Planned file-level changes:
-1. `supabase/functions/chat/index.ts`
-   - dynamic store domain support,
-   - robust Shopify catalog fetch and 401 handling,
-   - safer fallback behavior and better logging.
-2. `src/embed/widget.ts`
-   - native Shopify display mode,
-   - avatar-first flow for Shopify,
-   - multi-product recommendation routing to Shopify-native pages.
-3. `src/embed/types.ts`
-   - config additions for native display mode / store domain.
-4. `src/embed/index.ts`
-   - pass/store new config values.
-5. `public/ai-chat-widget.js`
-   - regenerate/update to match latest embed source (to remove old production behavior).
+### 1. Backend: Update system prompt to include product details in action blocks
 
-No database schema changes required:
-- This is mainly widget + backend-function behavior. Existing tables remain usable as fallback/logging.
+**File: `supabase/functions/chat/index.ts`**
 
-Validation checklist (end-to-end):
-1. Open Shopify storefront and click Bella Vita AI.
-2. Confirm avatar greeting starts immediately.
-3. Ask for “top 5 perfumes under X budget”.
-4. Confirm AI recommendations are from current Shopify catalog (not old domain products).
-5. Confirm product browsing occurs on Shopify-native pages/cards.
-6. Confirm add-to-cart/cart/checkout actions work from AI flow.
-7. Confirm no stale script by testing after hard refresh and in incognito.
+Change the native display prompt so the AI outputs enriched action blocks that include handle for matching:
 
-Risks and mitigations:
-- Risk: storefront protection causes 401.
-  - Mitigation: authenticated Shopify catalog path + explicit fallback messaging.
-- Risk: stale JS cache on Shopify.
-  - Mitigation: cache-busting script URL versioning.
-- Risk: mixed behavior between app `/chat` and Shopify widget.
-  - Mitigation: keep app chat unchanged, explicitly optimize Shopify embed path for this requirement.
+```
+:::action
+type: open_product
+product_name: Product Name
+product_handle: product-handle
+:::
+```
 
-Expected outcome after implementation:
-- On Shopify, Bella Vita AI opens with avatar flow, answers with live Shopify catalog recommendations, and presents products through Shopify’s own native storefront UI rather than custom product cards.
+This is a minimal change -- the handle is already in the catalog data sent to the AI.
+
+### 2. Widget: Match action blocks against client catalog for rich data
+
+**File: `public/ai-chat-widget.js`**
+
+When `open_product` actions are extracted, look up each product in the already-fetched `shopifyCatalog` array by handle (or fuzzy name match). This gives us the full product data: image, price, compare_at_price, variants, etc.
+
+### 3. Widget: Replace plain text links with rich product cards
+
+**File: `public/ai-chat-widget.js`**
+
+Add CSS styles for product cards matching Shopify's collection page layout:
+- Product image (aspect-square)
+- Discount percentage badge (green, bottom-left of image)
+- Product name (truncated)
+- Price with strikethrough for discounted items
+- "Add to Cart" button (full-width, styled)
+- "In Cart" state with checkmark
+
+Replace the `.aicw-product-links` rendering with a 2-column grid of these cards.
+
+### 4. Widget: Wire up Add to Cart functionality
+
+Each card's "Add to Cart" button will call the existing `shopifyAddToCart()` function (which uses Shopify's `/cart/add.js` endpoint). Track which products are in cart to show the "In Cart" state.
+
+## Visual Change
+
+```text
+BEFORE (current):                    AFTER (new):
++---------------------------+        +---------------------------+
+| GLAM Woman Perfume   [->] |        | [IMG]        | [IMG]      |
+| Luxury Collection    [->] |        | GLAM Woman   | Luxury     |
+| CEO Woman Perfume    [->] |        | Rs 599       | Rs 1299    |
+| IMPACT Man Perfume   [->] |        | [Add to Cart]| [Add to Ct]|
+| Luxury Oud Exp Set   [->] |        | [IMG]        | [IMG]      |
++---------------------------+        | CEO Woman    | IMPACT Man |
+                                     | Rs 499       | Rs 699     |
+                                     | [Add to Cart]| [Add to Ct]|
+                                     +---------------------------+
+```
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `supabase/functions/chat/index.ts` | Add `product_handle` to the native display prompt so AI includes handles in action blocks |
+| `public/ai-chat-widget.js` | Add product card CSS styles, catalog matching logic, rich card rendering with images/prices/buttons, and Add to Cart wiring |
+
+## How It Works End-to-End
+
+1. Widget opens, fetches `/products.json` from Shopify (already working)
+2. User speaks, audio goes to STT, text goes to chat backend
+3. Backend has the full catalog context, AI recommends products with handles
+4. Widget extracts `:::action` blocks, matches handles against `shopifyCatalog`
+5. Widget renders rich product cards with real images, prices from Shopify
+6. User taps "Add to Cart" -- calls Shopify's `/cart/add.js` with the variant ID
+7. Card updates to show "In Cart" state
+
+No new dependencies or API keys needed. The Shopify catalog fetch and cart integration already exist.
+
