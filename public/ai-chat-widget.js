@@ -1,19 +1,16 @@
 /**
- * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
- * v2.4 — Fix product grid display + diagnostic logging
+ * AI Chat Widget — Voice-First Shopping Assistant — Floating Overlay Mode
+ * v3.0 — Compact floating mic bar that controls real Shopify pages
  */
 (function () {
   "use strict";
 
   // ── Icons ──────────────────────────────────────────────────────────
   var ICONS = {
-    chat: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-    close: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-    send: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
     mic: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
     micOff: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
     voice: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>',
-    link: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
+    close: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
   };
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -22,101 +19,38 @@
     .aicw-root {\
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\
       font-size: 14px; line-height: 1.5; color: #1a1a2e; box-sizing: border-box;\
-      width: 100%; height: 100%;\
     }\
     .aicw-root *, .aicw-root *::before, .aicw-root *::after { box-sizing: border-box; }\
-    .aicw-panel {\
-      width: 100%; height: 100%; border-radius: 0; border: none;\
-      background: #fff; display: flex; flex-direction: column; overflow: hidden;\
+    /* Floating bar */\
+    .aicw-floating-bar {\
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);\
+      display: flex; align-items: center; gap: 12px;\
+      background: #fff; border-radius: 28px;\
+      padding: 8px 16px 8px 8px;\
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.08);\
+      max-width: 380px; min-width: 240px;\
+      z-index: 99999;\
+      animation: aicw-bar-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);\
     }\
-    .aicw-header {\
-      display: flex; align-items: center; justify-content: space-between;\
-      padding: 12px 16px; background: " + primaryColor + "; color: #fff; flex-shrink: 0;\
-    }\
-    .aicw-header-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }\
-    .aicw-header-title svg { width: 20px; height: 20px; }\
-    .aicw-close {\
-      width: 28px; height: 28px; border-radius: 50%; border: none;\
-      background: rgba(255,255,255,0.15); color: #fff; cursor: pointer;\
-      display: flex; align-items: center; justify-content: center; transition: background 0.2s;\
-    }\
-    .aicw-close:hover { background: rgba(255,255,255,0.3); }\
-    .aicw-close svg { width: 16px; height: 16px; }\
-    /* Avatar area */\
-    .aicw-avatar-area {\
-      flex: 1; display: flex; flex-direction: column; align-items: center;\
-      justify-content: center; padding: 24px; text-align: center;\
-      background: linear-gradient(180deg, #f8f6ff 0%, #fff 100%);\
-    }\
-    .aicw-avatar-circle {\
-      width: 120px; height: 120px; border-radius: 50%;\
-      background: linear-gradient(135deg, " + primaryColor + ", #a78bfa);\
-      display: flex; align-items: center; justify-content: center;\
-      margin-bottom: 16px; position: relative;\
-      box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25);\
-      transition: transform 0.3s ease;\
-    }\
-    .aicw-avatar-circle svg { width: 48px; height: 48px; color: #fff; }\
-    .aicw-avatar-circle.speaking {\
-      animation: aicw-avatar-pulse-speak 1.5s ease-in-out infinite;\
-    }\
-    .aicw-avatar-circle.speaking::before {\
-      content: ''; position: absolute; inset: -14px; border-radius: 50%;\
-      border: 3px solid " + primaryColor + "; opacity: 0.4;\
-      animation: aicw-ring-expand 2s ease-in-out infinite;\
-    }\
-    .aicw-avatar-circle.speaking::after {\
-      content: ''; position: absolute; inset: -28px; border-radius: 50%;\
-      border: 2px solid " + primaryColor + "; opacity: 0.2;\
-      animation: aicw-ring-expand 2s ease-in-out 0.5s infinite;\
-    }\
-    .aicw-avatar-circle.listening { animation: aicw-avatar-pulse-listen 0.8s ease-in-out infinite; }\
-    .aicw-avatar-circle.listening::before {\
-      content: ''; position: absolute; inset: -10px; border-radius: 50%;\
-      border: 2px solid #ef4444; opacity: 0.5;\
-      animation: aicw-ring-expand 1.2s ease-in-out infinite;\
-    }\
-    @keyframes aicw-avatar-pulse-speak {\
-      0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25); }\
-      50% { transform: scale(1.1); box-shadow: 0 16px 56px rgba(108, 59, 235, 0.5); }\
-    }\
-    @keyframes aicw-avatar-pulse-listen {\
-      0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25); }\
-      50% { transform: scale(1.06); box-shadow: 0 12px 40px rgba(108, 59, 235, 0.35); }\
-    }\
-    @keyframes aicw-ring-expand {\
-      0% { transform: scale(0.9); opacity: 0.5; }\
-      50% { transform: scale(1.1); opacity: 0.15; }\
-      100% { transform: scale(0.9); opacity: 0.5; }\
-    }\
-    .aicw-avatar-status {\
-      font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 8px;\
-    }\
-    .aicw-avatar-sub {\
-      font-size: 12px; color: #9ca3af;\
-    }\
-    .aicw-transcript {\
-      margin-top: 12px; padding: 8px 16px; border-radius: 12px;\
-      background: #f3f4f6; font-size: 13px; color: #374151;\
-      max-width: 90%; word-wrap: break-word;\
+    @keyframes aicw-bar-in {\
+      from { opacity: 0; transform: translateX(-50%) translateY(20px); }\
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }\
     }\
     /* Mic button */\
     .aicw-mic-btn {\
-      width: 72px; height: 72px; border-radius: 50%; border: none;\
+      width: 44px; height: 44px; border-radius: 50%; border: none;\
       cursor: pointer; display: flex; align-items: center; justify-content: center;\
       transition: transform 0.2s, background 0.2s; position: relative;\
       color: #fff; flex-shrink: 0;\
     }\
-    .aicw-mic-btn svg { width: 32px; height: 32px; position: relative; z-index: 1; }\
-    .aicw-mic-btn.small { width: 40px; height: 40px; }\
-    .aicw-mic-btn.small svg { width: 20px; height: 20px; }\
+    .aicw-mic-btn svg { width: 22px; height: 22px; position: relative; z-index: 1; }\
     .aicw-mic-btn.idle { background: " + primaryColor + "; }\
     .aicw-mic-btn.listening { background: #ef4444; }\
     .aicw-mic-btn.processing { background: #f59e0b; pointer-events: none; }\
     .aicw-mic-btn.speaking { background: #10b981; pointer-events: none; }\
-    .aicw-mic-btn:hover { transform: scale(1.06); }\
+    .aicw-mic-btn:hover { transform: scale(1.08); }\
     .aicw-mic-btn::before {\
-      content: ''; position: absolute; inset: -6px; border-radius: 50%;\
+      content: ''; position: absolute; inset: -4px; border-radius: 50%;\
       border: 2px solid; opacity: 0; animation: none;\
     }\
     .aicw-mic-btn.idle::before {\
@@ -127,187 +61,80 @@
     }\
     @keyframes aicw-pulse {\
       0%, 100% { transform: scale(1); opacity: 0.3; }\
-      50% { transform: scale(1.15); opacity: 0; }\
+      50% { transform: scale(1.2); opacity: 0; }\
     }\
+    /* Bar info */\
+    .aicw-bar-info {\
+      flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0;\
+    }\
+    .aicw-bar-status {\
+      font-size: 13px; font-weight: 500; color: #374151;\
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\
+    }\
+    .aicw-bar-sub {\
+      font-size: 11px; color: #9ca3af;\
+    }\
+    .aicw-bar-waveform { width: 100%; height: 24px; }\
+    /* Close button */\
+    .aicw-close-btn {\
+      width: 28px; height: 28px; border-radius: 50%; border: none;\
+      background: #f3f4f6; color: #6b7280; cursor: pointer;\
+      display: flex; align-items: center; justify-content: center;\
+      transition: background 0.2s; flex-shrink: 0;\
+    }\
+    .aicw-close-btn:hover { background: #e5e7eb; color: #374151; }\
+    .aicw-close-btn svg { width: 14px; height: 14px; }\
+    /* Transcript bubble */\
+    .aicw-transcript-bubble {\
+      position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);\
+      background: #1a1a2e; color: #fff; padding: 10px 16px;\
+      border-radius: 12px; font-size: 13px; max-width: 360px;\
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);\
+      animation: aicw-bubble-in 0.3s ease;\
+      z-index: 99998; word-wrap: break-word;\
+    }\
+    .aicw-transcript-bubble.user {\
+      background: " + primaryColor + "; color: #fff;\
+    }\
+    .aicw-transcript-bubble.fading {\
+      opacity: 0; transition: opacity 0.5s;\
+    }\
+    @keyframes aicw-bubble-in {\
+      from { opacity: 0; transform: translateX(-50%) translateY(8px); }\
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }\
+    }\
+    /* FAB (closed state) */\
+    .aicw-fab {\
+      width: 56px; height: 56px; border-radius: 50%; border: none;\
+      background: " + primaryColor + "; color: #fff; cursor: pointer;\
+      display: flex; align-items: center; justify-content: center;\
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);\
+      transition: transform 0.2s;\
+      position: fixed; bottom: 24px; right: 24px;\
+    }\
+    .aicw-fab:hover { transform: scale(1.08); }\
+    .aicw-fab svg { width: 28px; height: 28px; }\
     /* Spinner */\
     .aicw-spinner {\
-      width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3);\
+      width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.3);\
       border-top-color: #fff; border-radius: 50%;\
       animation: aicw-spin 0.8s linear infinite; position: relative; z-index: 1;\
     }\
     @keyframes aicw-spin { to { transform: rotate(360deg); } }\
-    /* Bottom bar */\
-    .aicw-bottom-bar {\
-      flex-shrink: 0; border-top: 1px solid #e5e7eb; padding: 8px 12px;\
-      display: flex; align-items: center; gap: 10px; background: #fafafa;\
-    }\
-    .aicw-bar-info {\
-      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0;\
-    }\
-    .aicw-bar-status {\
-      font-size: 11px; color: #6b7280; white-space: nowrap;\
-      overflow: hidden; text-overflow: ellipsis; max-width: 100%;\
-    }\
-    .aicw-bar-waveform { width: 100%; height: 28px; }\
-    .aicw-cancel-btn {\
-      font-size: 11px; color: #6b7280; background: none;\
-      border: 1px solid #e5e7eb; border-radius: 999px;\
-      padding: 4px 12px; cursor: pointer; transition: color 0.2s; flex-shrink: 0;\
-    }\
-    .aicw-cancel-btn:hover { color: #ef4444; border-color: #ef4444; }\
-    /* Product cards grid */\
-    .aicw-product-grid {\
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;\
-      padding: 10px 12px; overflow-y: auto; flex: 1;\
-      animation: aicw-grid-slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;\
-    }\
-    .aicw-pcard {\
-      animation: aicw-card-pop 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;\
-    }\
-    .aicw-pcard:nth-child(1) { animation-delay: 0.05s; }\
-    .aicw-pcard:nth-child(2) { animation-delay: 0.1s; }\
-    .aicw-pcard:nth-child(3) { animation-delay: 0.15s; }\
-    .aicw-pcard:nth-child(4) { animation-delay: 0.2s; }\
-    .aicw-pcard:nth-child(5) { animation-delay: 0.25s; }\
-    .aicw-pcard:nth-child(6) { animation-delay: 0.3s; }\
-    @keyframes aicw-grid-slide-up {\
-      from { opacity: 0; transform: translateY(40px); }\
-      to { opacity: 1; transform: translateY(0); }\
-    }\
-    @keyframes aicw-card-pop {\
-      from { opacity: 0; transform: scale(0.85) translateY(20px); }\
-      to { opacity: 1; transform: scale(1) translateY(0); }\
-    }\
-    .aicw-pcard {\
-      border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;\
-      background: #fff; display: flex; flex-direction: column;\
-      transition: box-shadow 0.2s;\
-    }\
-    .aicw-pcard:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }\
-    .aicw-pcard-img-wrap {\
-      position: relative; width: 100%; aspect-ratio: 1; background: #f3f4f6; overflow: hidden;\
-    }\
-    .aicw-pcard-img {\
-      width: 100%; height: 100%; object-fit: cover; display: block;\
-    }\
-    .aicw-pcard-badge {\
-      position: absolute; bottom: 6px; left: 6px;\
-      background: #16a34a; color: #fff; font-size: 10px; font-weight: 700;\
-      padding: 2px 6px; border-radius: 4px;\
-    }\
-    .aicw-pcard-body { padding: 8px; display: flex; flex-direction: column; gap: 4px; flex: 1; }\
-    .aicw-pcard-name {\
-      font-size: 12px; font-weight: 600; color: #1a1a2e;\
-      overflow: hidden; text-overflow: ellipsis;\
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;\
-    }\
-    .aicw-pcard-price { font-size: 13px; font-weight: 700; color: " + primaryColor + "; }\
-    .aicw-pcard-old {\
-      font-size: 11px; color: #9ca3af; text-decoration: line-through; margin-left: 4px;\
-    }\
-    .aicw-pcard-atc {\
-      width: 100%; border: none; border-radius: 8px; padding: 7px 0;\
-      font-size: 12px; font-weight: 600; cursor: pointer;\
-      transition: background 0.2s, transform 0.1s;\
-      background: " + primaryColor + "; color: #fff; margin-top: auto;\
-    }\
-    .aicw-pcard-atc:hover { filter: brightness(1.1); transform: scale(1.02); }\
-    .aicw-pcard-atc:active { transform: scale(0.98); }\
-    .aicw-pcard-atc.in-cart {\
-      background: #16a34a; pointer-events: none;\
-    }\
-    .aicw-pcard-atc.adding {\
-      background: #9ca3af; pointer-events: none;\
-    }\
     /* Toast */\
     .aicw-toast {\
-      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);\
-      background: #1a1a2e; color: #fff; padding: 8px 16px; border-radius: 8px;\
-      font-size: 12px; z-index: 99999; display: flex; align-items: center; gap: 6px;\
-      animation: aicw-toast-in 0.3s ease;\
+      position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);\
+      background: #16a34a; color: #fff; padding: 10px 18px; border-radius: 10px;\
+      font-size: 13px; z-index: 100000; display: flex; align-items: center; gap: 8px;\
+      animation: aicw-toast-in 0.3s ease; box-shadow: 0 4px 16px rgba(0,0,0,0.2);\
     }\
-    .aicw-toast svg { width: 14px; height: 14px; }\
+    .aicw-toast svg { width: 16px; height: 16px; }\
+    .aicw-toast.error { background: #ef4444; }\
     .aicw-toast-out { opacity: 0; transition: opacity 0.3s; }\
-    @keyframes aicw-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }\
-    /* Powered */\
-    .aicw-powered {\
-      text-align: center; font-size: 10px; color: #9ca3af; padding: 4px 0 8px; flex-shrink: 0;\
-    }\
-    /* Loading dots for welcome */\
-    .aicw-loading-dots {\
-      display: flex; gap: 6px; justify-content: center; margin-top: 12px;\
-    }\
-    .aicw-loading-dots span {\
-      width: 8px; height: 8px; border-radius: 50%; background: " + primaryColor + ";\
-      animation: aicw-dot-pulse 1.4s ease-in-out infinite both;\
-    }\
-    .aicw-loading-dots span:nth-child(2) { animation-delay: 0.2s; }\
-    .aicw-loading-dots span:nth-child(3) { animation-delay: 0.4s; }\
-    @keyframes aicw-dot-pulse {\
-      0%, 80%, 100% { transform: scale(0.4); opacity: 0.3; }\
-      40% { transform: scale(1); opacity: 1; }\
-    }\
-    /* Card just-added flash */\
-    .aicw-pcard-just-added {\
-      animation: aicw-card-flash 1.5s ease;\
-    }\
-    @keyframes aicw-card-flash {\
-      0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }\
-      30% { box-shadow: 0 0 0 4px rgba(22,163,74,0.4); border-color: #16a34a; }\
-      100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }\
-    }\
-    /* Image placeholder */\
-    .aicw-pcard-placeholder {\
-      width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;\
-      background: #f3f4f6; color: #d1d5db;\
-    }\
-    .aicw-pcard-placeholder svg { width: 32px; height: 32px; }\
-    /* Cart toast large */\
-    .aicw-toast.aicw-toast-cart {\
-      background: #16a34a; font-size: 14px; padding: 12px 20px;\
-    }\
-    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }\
-    /* In-widget PDP */\
-    .aicw-pdp { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }\
-    .aicw-pdp-img-wrap {\
-      width: 100%; aspect-ratio: 1; background: #f3f4f6; overflow: hidden; position: relative;\
-    }\
-    .aicw-pdp-img { width: 100%; height: 100%; object-fit: cover; display: block; }\
-    .aicw-pdp-badge {\
-      position: absolute; bottom: 10px; left: 10px;\
-      background: #16a34a; color: #fff; font-size: 12px; font-weight: 700;\
-      padding: 3px 8px; border-radius: 4px;\
-    }\
-    .aicw-pdp-info { padding: 16px; flex: 1; }\
-    .aicw-pdp-name { font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }\
-    .aicw-pdp-vendor { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }\
-    .aicw-pdp-price-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }\
-    .aicw-pdp-price { font-size: 22px; font-weight: 800; color: #1a1a2e; }\
-    .aicw-pdp-old-price { font-size: 14px; color: #9ca3af; text-decoration: line-through; }\
-    .aicw-pdp-desc { font-size: 13px; color: #6b7280; line-height: 1.6; margin-bottom: 16px; }\
-    .aicw-pdp-actions { display: flex; gap: 8px; }\
-    .aicw-pdp-atc {\
-      flex: 1; border: none; border-radius: 10px; padding: 12px 0;\
-      font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;\
-      color: #fff; text-transform: uppercase; letter-spacing: 0.5px;\
-    }\
-    .aicw-pdp-atc:hover { filter: brightness(1.1); transform: scale(1.02); }\
-    .aicw-pdp-atc:active { transform: scale(0.98); }\
-    .aicw-pdp-atc.in-cart { background: #16a34a; pointer-events: none; }\
-    .aicw-pdp-back {\
-      display: flex; align-items: center; gap: 4px; font-size: 12px; color: #6b7280;\
-      background: none; border: 1px solid #e5e7eb; border-radius: 999px;\
-      padding: 4px 12px; cursor: pointer; transition: color 0.2s; margin: 10px 12px 0;\
-    }\
-    .aicw-pdp-back:hover { color: #374151; border-color: #d1d5db; }\
-    /* PDP Q&A section */\
-    .aicw-pdp-qa { padding: 0 16px 12px; }\
-    .aicw-pdp-qa-label { font-size: 11px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }\
-    .aicw-pdp-qa-msg {\
-      border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 6px;\
-    }\
-    .aicw-pdp-qa-user { background: rgba(108,59,235,0.08); color: #1a1a2e; margin-left: 40px; }\
-    .aicw-pdp-qa-bot { background: #f3f4f6; color: #374151; margin-right: 20px; }";
+    @keyframes aicw-toast-in {\
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }\
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }\
+    }";
   }
 
   // ── Shopify helpers ────────────────────────────────────────────────
@@ -354,7 +181,13 @@
     }
   }
 
-  function shopifyGoToCheckout() { window.location.href = "/checkout"; }
+  function shopifyGoToCheckout() {
+    // Try clicking native checkout button first
+    var checkoutBtn = document.querySelector('[name="checkout"], .cart__checkout-button, [type="submit"][value*="Check"], a[href="/checkout"]');
+    if (checkoutBtn) { checkoutBtn.click(); }
+    else { window.location.href = "/checkout"; }
+  }
+
   function shopifyGoToCart() { window.location.href = "/cart"; }
 
   function addToCartByProduct(productName, productLink) {
@@ -381,7 +214,6 @@
     });
   }
 
-  // ── Fetch Shopify catalog client-side ──────────────────────────────
   function fetchShopifyCatalog() {
     if (!isShopify()) return Promise.resolve([]);
     return fetch("/products.json?limit=250")
@@ -390,7 +222,7 @@
       .catch(function () { return []; });
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────
+  // ── Session helpers ────────────────────────────────────────────────
   var STORAGE_KEY = "aicw_session";
 
   function generateSessionId() {
@@ -446,7 +278,7 @@
     return actions;
   }
 
-  // Clean text for TTS — strip action blocks, markdown, emojis
+  // Clean text for TTS
   function cleanForTTS(content) {
     return content
       .replace(/:::(product|action)\n[\s\S]*?:::/g, "")
@@ -475,21 +307,17 @@
     var chatUrl = apiUrl + "/functions/v1/chat";
     var sttUrl = apiUrl + "/functions/v1/sarvam-stt";
     var ttsUrl = apiUrl + "/functions/v1/sarvam-tts";
-    // Restore session state from sessionStorage (survives Shopify page navigations)
+
+    // Restore session
     var savedSession = loadSession();
     var sessionId = (savedSession && savedSession.sessionId) || generateSessionId();
     var conversationId = (savedSession && savedSession.conversationId) || null;
     var isOpen = (savedSession && savedSession.isOpen) || false;
-    var pendingActions = [];
     var shopifyCatalog = [];
-    var inCartHandles = (savedSession && savedSession.inCartHandles) || {};
     var pendingNavigation = null;
-    var productCards = (savedSession && savedSession.productCards) || [];
-    var showProductGrid = (savedSession && savedSession.showProductGrid) || false;
-    // activeProduct removed — we navigate to real Shopify PDP instead
 
     // Voice state
-    var voiceState = "idle"; // idle | listening | processing | speaking
+    var voiceState = "idle";
     var voiceStatusText = "";
     var voiceTranscript = "";
     var mediaRecorder = null;
@@ -504,22 +332,21 @@
     var waveformRafId = 0;
     var welcomeTriggered = (savedSession && savedSession.welcomeTriggered) || false;
     var isWelcomeLoading = false;
+    var transcriptBubbleTimeout = null;
+    var lastBotText = (savedSession && savedSession.lastBotText) || "";
 
-    // Persist state after each meaningful change
     function persistState() {
       saveSession({
         sessionId: sessionId,
         conversationId: conversationId,
         isOpen: isOpen,
         voiceMessages: voiceMessages,
-        productCards: productCards,
-        showProductGrid: showProductGrid,
-        inCartHandles: inCartHandles,
-        welcomeTriggered: welcomeTriggered
+        welcomeTriggered: welcomeTriggered,
+        lastBotText: lastBotText
       });
     }
 
-    // Fetch catalog on init if Shopify
+    // Fetch catalog on init
     if (isShopifyPlatform) {
       fetchShopifyCatalog().then(function (products) {
         shopifyCatalog = products;
@@ -527,38 +354,9 @@
       });
     }
 
-    function executePendingActions() {
-      var actions = pendingActions.slice();
-      pendingActions = [];
-      actions.forEach(function (action) {
-        if (!isShopifyPlatform) return;
-        switch (action.type) {
-          case "add_to_cart":
-            if (action.product_name) {
-              addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                console.log("Add to cart:", result.message);
-              });
-            }
-            break;
-          case "open_product":
-            break;
-          case "navigate_to_checkout":
-            shopifyGoToCheckout();
-            break;
-          case "navigate_to_cart":
-            shopifyGoToCart();
-            break;
-        }
-      });
-    }
-
-    // Host element — full-screen overlay
+    // ── DOM setup ────────────────────────────────────────────────
     var host = document.createElement("div");
     host.id = "ai-chat-widget";
-    host.style.position = "fixed";
-    host.style.inset = "0";
-    host.style.zIndex = String(zIndex);
-    host.style.display = "none";
     document.body.appendChild(host);
 
     var shadow = host.attachShadow({ mode: "closed" });
@@ -569,6 +367,35 @@
     var root = document.createElement("div");
     root.className = "aicw-root";
     shadow.appendChild(root);
+
+    // ── Toast ────────────────────────────────────────────────────
+    function showToast(msg, isError) {
+      var existing = root.querySelector(".aicw-toast");
+      if (existing) existing.remove();
+      var t = document.createElement("div");
+      t.className = "aicw-toast" + (isError ? " error" : "");
+      t.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' + msg;
+      root.appendChild(t);
+      setTimeout(function () { t.classList.add("aicw-toast-out"); }, 3000);
+      setTimeout(function () { t.remove(); }, 3500);
+    }
+
+    // ── Transcript bubble ────────────────────────────────────────
+    function showBubble(text, isUser) {
+      var existing = root.querySelector(".aicw-transcript-bubble");
+      if (existing) existing.remove();
+      if (transcriptBubbleTimeout) clearTimeout(transcriptBubbleTimeout);
+
+      var bubble = document.createElement("div");
+      bubble.className = "aicw-transcript-bubble" + (isUser ? " user" : "");
+      bubble.textContent = isUser ? ('"' + text + '"') : text;
+      root.appendChild(bubble);
+
+      transcriptBubbleTimeout = setTimeout(function () {
+        bubble.classList.add("fading");
+        setTimeout(function () { bubble.remove(); }, 500);
+      }, 5000);
+    }
 
     // ── Voice ────────────────────────────────────────────────────
     function setVoiceState(state, status) {
@@ -622,16 +449,14 @@
     var maxRecordingTimeout = null;
 
     function startListening() {
-      if (!isOpen) return; // Don't listen if widget closed
+      if (!isOpen) return;
       audioChunks = [];
       voiceTranscript = "";
-      console.log("[AI Widget] startListening called, voiceState:", voiceState);
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         micStream = stream;
-        setVoiceState("listening", "Listening... speak now");
+        setVoiceState("listening", "Listening...");
 
         var mimeType = getSupportedMimeType();
-        console.log("[AI Widget] Using mimeType:", mimeType || "(default)");
         var recorderOpts = mimeType ? { mimeType: mimeType } : undefined;
         mediaRecorder = new MediaRecorder(stream, recorderOpts);
         var recordingMimeType = mediaRecorder.mimeType || "audio/webm";
@@ -639,11 +464,9 @@
           if (e.data.size > 0) audioChunks.push(e.data);
         };
         mediaRecorder.onstop = function () {
-          console.log("[AI Widget] mediaRecorder.onstop, voiceState:", voiceState, "chunks:", audioChunks.length);
           var blob = new Blob(audioChunks, { type: recordingMimeType });
           if (blob.size < 500) {
-            console.log("[AI Widget] Audio too small, ignoring. Size:", blob.size);
-            setVoiceState("idle", "Didn't catch that. Listening again...");
+            setVoiceState("idle", "Tap to speak");
             if (isOpen) setTimeout(startListening, 1500);
             return;
           }
@@ -653,10 +476,7 @@
 
         if (maxRecordingTimeout) clearTimeout(maxRecordingTimeout);
         maxRecordingTimeout = setTimeout(function () {
-          if (voiceState === "listening") {
-            console.log("[AI Widget] Max recording timeout (10s), auto-stopping");
-            stopMic();
-          }
+          if (voiceState === "listening") stopMic();
         }, 10000);
 
         audioContext = new AudioContext();
@@ -673,11 +493,10 @@
           var rms = 0;
           for (var i = 0; i < vadData.length; i++) rms += vadData[i] * vadData[i];
           rms = Math.sqrt(rms / vadData.length);
-
           var now = Date.now();
           if (rms < 0.01) {
             if (vadSilenceStart === 0) vadSilenceStart = now;
-            else if (now - vadSilenceStart > 2000) { console.log("[AI Widget] VAD silence detected, stopping mic"); stopMic(); return; }
+            else if (now - vadSilenceStart > 2000) { stopMic(); return; }
           } else { vadSilenceStart = 0; }
           vadRafId = requestAnimationFrame(checkVAD);
         }
@@ -685,7 +504,7 @@
         startWaveform();
       }).catch(function (err) {
         console.error("Mic access denied:", err);
-        setVoiceState("idle", "Microphone access denied");
+        setVoiceState("idle", "Mic access denied");
       });
     }
 
@@ -694,7 +513,7 @@
       if (!canvas || !analyserNode) return;
       var ctx = canvas.getContext("2d");
       var freqData = new Uint8Array(analyserNode.frequencyBinCount);
-      var barCount = 24;
+      var barCount = 20;
 
       function draw() {
         if (voiceState !== "listening" || !analyserNode) return;
@@ -716,7 +535,7 @@
           var x = i * (barW + gap);
           var y = centerY - barH / 2;
           var opacity = 0.3 + val * 0.7;
-          ctx.fillStyle = "rgba(108, 59, 235, " + opacity + ")";
+          ctx.fillStyle = "rgba(239, 68, 68, " + opacity + ")";
           ctx.beginPath();
           ctx.roundRect(x, y, barW, barH, barW / 2);
           ctx.fill();
@@ -730,45 +549,37 @@
       if (maxRecordingTimeout) { clearTimeout(maxRecordingTimeout); maxRecordingTimeout = null; }
       var rawMime = blob.type || "audio/webm";
       var normalizedMime = normalizeMime(rawMime);
-      console.log("[AI Widget] processAudio — blob size:", blob.size, "rawMime:", rawMime, "normalized:", normalizedMime);
       setVoiceState("processing", "Processing...");
       var reader = new FileReader();
       reader.onloadend = function () {
         var base64 = reader.result.split(",")[1];
-        console.log("[AI Widget] Sending STT request, base64 length:", base64 ? base64.length : 0);
         fetch(sttUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
           body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: normalizedMime, audioMimeTypeRaw: rawMime })
         }).then(function (r) { return r.json(); }).then(function (sttResult) {
           if (sttResult.error) {
-            console.warn("[AI Widget] STT returned error:", sttResult.error);
             sttFailCount++;
-            if (sttFailCount >= 2) {
-              setVoiceState("idle", "Audio format issue. Retrying...");
-              sttFailCount = 0;
-            } else {
-              setVoiceState("idle", "Didn't catch that. Listening again...");
-            }
+            setVoiceState("idle", "Tap to speak");
             if (isOpen) setTimeout(startListening, 1500);
             return;
           }
           var transcript = sttResult.transcript;
           if (!transcript || !transcript.trim()) {
-            setVoiceState("idle", "Didn't catch that. Listening again...");
+            setVoiceState("idle", "Tap to speak");
             if (isOpen) setTimeout(startListening, 1500);
             return;
           }
           sttFailCount = 0;
           voiceTranscript = transcript;
+          showBubble(transcript, true);
           setVoiceState("processing", "Thinking...");
-          render();
           voiceMessages.push({ role: "user", content: transcript });
           sendToChat(transcript);
         }).catch(function (err) {
           console.error("STT error:", err);
           sttFailCount++;
-          setVoiceState("idle", "Didn't catch that. Listening again...");
+          setVoiceState("idle", "Tap to speak");
           if (isOpen) setTimeout(startListening, 1500);
         });
       };
@@ -813,7 +624,6 @@
         function pump() {
           return streamReader.read().then(function (result) {
             if (result.done) {
-              console.log("[AI Widget] Stream complete, fullResponse length:", fullResponse.length, "preview:", fullResponse.substring(0, 200));
               onChatComplete(fullResponse, query);
               return;
             }
@@ -841,7 +651,7 @@
         return pump();
       }).catch(function (err) {
         console.error("[AI Widget] Chat fetch error:", err);
-        setVoiceState("idle", "Connection error. Retrying...");
+        setVoiceState("idle", "Connection error");
         isWelcomeLoading = false;
         render();
         setTimeout(function () {
@@ -850,105 +660,42 @@
       });
     }
 
-    function lookupCatalog(handle, name) {
-      if (!shopifyCatalog.length) return null;
-      if (handle) {
-        for (var i = 0; i < shopifyCatalog.length; i++) {
-          if (shopifyCatalog[i].handle === handle) return shopifyCatalog[i];
-        }
-      }
-      if (name) {
-        var lower = name.toLowerCase();
-        for (var i = 0; i < shopifyCatalog.length; i++) {
-          if (shopifyCatalog[i].title && shopifyCatalog[i].title.toLowerCase().indexOf(lower) !== -1) return shopifyCatalog[i];
-        }
-      }
-      return null;
-    }
-
-    function enrichAction(action) {
-      var handle = action.product_handle || extractHandle(action.product_link || "");
-      var catalogProduct = lookupCatalog(handle, action.product_name);
-      var variant = catalogProduct && catalogProduct.variants && catalogProduct.variants[0];
-      var price = variant ? parseFloat(variant.price) : 0;
-      var comparePrice = variant && variant.compare_at_price ? parseFloat(variant.compare_at_price) : null;
-      var image = catalogProduct ? (catalogProduct.images && catalogProduct.images[0] ? (catalogProduct.images[0].src || catalogProduct.images[0]) : catalogProduct.featured_image) : null;
-      return {
-        name: action.product_name || (catalogProduct ? catalogProduct.title : "Product"),
-        handle: handle || (catalogProduct ? catalogProduct.handle : ""),
-        link: action.product_link || (handle ? "/products/" + handle : "#"),
-        image: image || "",
-        price: price,
-        comparePrice: comparePrice,
-        variantId: variant ? variant.id : null,
-        available: variant ? variant.available : true
-      };
-    }
-
     function onChatComplete(fullResponse, query) {
-      console.log("[AI Widget] onChatComplete called, response length:", fullResponse.length);
       voiceMessages.push({ role: "assistant", content: fullResponse });
       persistState();
 
       var actions = extractActions(fullResponse);
-      console.log("[AI Widget] Extracted actions:", actions.length, JSON.stringify(actions.map(function(a){ return a.type; })));
       pendingNavigation = null;
-      
+
+      // Handle actions — navigate to real Shopify pages
       var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
-      var hadGrid = showProductGrid;
-      
-      if (openProductActions.length > 1 && isShopifyPlatform) {
-        productCards = [];
-        openProductActions.forEach(function (action) {
-          var enriched = enrichAction(action);
-          productCards.push(enriched);
-        });
-        showProductGrid = true;
-        persistState();
-      } else if (openProductActions.length === 1) {
-        // Navigate to the real Shopify PDP — bot persists via sessionStorage
-        var singleAction = openProductActions[0];
-        var enrichedSingle = enrichAction(singleAction);
-        var pdpUrl = enrichedSingle.handle ? "/products/" + enrichedSingle.handle : enrichedSingle.link;
-        if (pdpUrl && pdpUrl !== "#") {
-          pendingNavigation = pdpUrl;
+
+      if (openProductActions.length === 1) {
+        // Single product — navigate to PDP
+        var action = openProductActions[0];
+        var handle = action.product_handle || extractHandle(action.product_link || "");
+        if (handle) pendingNavigation = "/products/" + handle;
+      } else if (openProductActions.length > 1 && isShopifyPlatform) {
+        // Multiple products — navigate to search page
+        // Build a search query from the user's last message
+        var lastUserMsg = "";
+        for (var i = voiceMessages.length - 1; i >= 0; i--) {
+          if (voiceMessages[i].role === "user") { lastUserMsg = voiceMessages[i].content; break; }
         }
-        persistState();
-      } else if (openProductActions.length === 0 && hadGrid) {
-        var hasNavAction = actions.some(function (a) {
-          return a.type === "navigate_to_checkout" || a.type === "navigate_to_cart";
-        });
-        var hasCartAction = actions.some(function (a) { return a.type === "add_to_cart"; });
-        if (!hasNavAction && !hasCartAction) {
-          showProductGrid = false;
-          productCards = [];
+        if (lastUserMsg) {
+          pendingNavigation = "/search?q=" + encodeURIComponent(lastUserMsg);
         }
       }
-      
+
       actions.forEach(function (action) {
         if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
-            var enriched = enrichAction(action);
-            var handleToMark = enriched.handle;
-            var onAddSuccess = function () {
-              inCartHandles[handleToMark] = true;
-              showToast(enriched.name + " added to cart! ✓", true);
-              flashCard(handleToMark);
-              persistState();
-              render();
-            };
-            if (enriched.variantId) {
-              shopifyAddToCart(enriched.variantId).then(function (ok) {
-                if (ok) onAddSuccess();
-              });
-            } else {
-              addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-                if (result.success) onAddSuccess();
-              });
-            }
+            addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+              showToast(result.message, !result.success);
+            });
           }
         } else if (action.type === "navigate_to_checkout") {
-          if (isShopifyPlatform) pendingNavigation = "/checkout";
+          if (isShopifyPlatform) pendingNavigation = "__checkout__";
         } else if (action.type === "navigate_to_cart") {
           if (isShopifyPlatform) pendingNavigation = "/cart";
         }
@@ -958,25 +705,25 @@
 
       // TTS
       var ttsText = cleanForTTS(fullResponse);
-      console.log("[AI Widget] TTS text length:", ttsText ? ttsText.length : 0, "preview:", ttsText ? ttsText.substring(0, 100) : "(empty)");
+      lastBotText = ttsText;
+      persistState();
+
+      if (ttsText) {
+        showBubble(ttsText.length > 120 ? ttsText.substring(0, 117) + "..." : ttsText, false);
+      }
+
       if (!ttsText) {
-        console.log("[AI Widget] No TTS text, skipping speech. productCards:", productCards.length);
         if (pendingNavigation && isShopifyPlatform) {
-          setTimeout(function () { window.location.href = pendingNavigation; pendingNavigation = null; }, 500);
+          executeNavigation();
           return;
         }
-        setVoiceState("idle", "");
-        render();
+        setVoiceState("idle", "Tap to speak");
         setTimeout(startListening, 500);
         return;
       }
-      // Don't show product grid yet — wait until TTS finishes speaking
-      // Products will appear when audio ends (see currentAudio.onended)
 
       setVoiceState("speaking", "Speaking...");
-      render();
 
-      console.log("[AI Widget] Calling TTS:", ttsUrl);
       fetch(ttsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
@@ -985,7 +732,8 @@
         if (voiceState !== "speaking") return;
         var audioBase64 = ttsResult.audio;
         if (!audioBase64) {
-          setVoiceState("idle", "");
+          if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
+          setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 500);
           return;
         }
@@ -994,49 +742,49 @@
         currentAudio.onended = function () {
           currentAudio = null;
           if (voiceState === "speaking") {
-            // Now show product grid after speaking is done
-            if (productCards.length > 1) {
-              showProductGrid = true;
-              render();
-            }
             if (pendingNavigation && isShopifyPlatform) {
-              // Save state before navigating so widget resumes on next page
               persistState();
-              setTimeout(function () {
-                window.location.href = pendingNavigation;
-                pendingNavigation = null;
-              }, productCards.length > 1 ? 2000 : 300);
+              executeNavigation();
               return;
             }
-            setVoiceState("idle", "");
+            setVoiceState("idle", "Tap to speak");
             setTimeout(startListening, 800);
           }
         };
         currentAudio.onerror = function () {
           currentAudio = null;
-          if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
-          executePendingActions();
-          setVoiceState("idle", "");
+          if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
+          setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 1000);
         };
         currentAudio.play().catch(function () {
-          if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
-          executePendingActions();
-          setVoiceState("idle", "");
+          if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
+          setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 1000);
         });
       }).catch(function (err) {
         console.error("TTS error:", err);
-        setVoiceState("idle", "");
+        if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
+        setVoiceState("idle", "Tap to speak");
         setTimeout(startListening, 1000);
       });
     }
 
+    function executeNavigation() {
+      if (!pendingNavigation) return;
+      var nav = pendingNavigation;
+      pendingNavigation = null;
+      if (nav === "__checkout__") {
+        shopifyGoToCheckout();
+      } else {
+        window.location.href = nav;
+      }
+    }
+
     function onMicToggle() {
-      console.log("[AI Widget] onMicToggle, current voiceState:", voiceState, "isWelcomeLoading:", isWelcomeLoading);
       if (isWelcomeLoading) return;
       if (voiceState === "idle") startListening();
-      else if (voiceState === "listening") { stopMic(); setVoiceState("idle", ""); }
+      else if (voiceState === "listening") { stopMic(); setVoiceState("idle", "Tap to speak"); }
     }
 
     function triggerWelcome() {
@@ -1047,7 +795,7 @@
       persistState();
       render();
 
-      var welcomeQuery = "Hi, welcome me to Bella Vita store and show me top selling products";
+      var welcomeQuery = "Hi, welcome me to Bella Vita store and tell me how you can help";
       voiceMessages.push({ role: "user", content: welcomeQuery });
       sendToChat(welcomeQuery);
     }
@@ -1057,250 +805,100 @@
       welcomeTriggered = false;
       isWelcomeLoading = false;
       voiceMessages = [];
-      productCards = [];
-      showProductGrid = false;
-      inCartHandles = {};
       voiceTranscript = "";
+      lastBotText = "";
       conversationId = null;
       isOpen = false;
       clearSession();
       render();
     }
 
-    // Language detection for TTS
     function detectLang(text) {
       var hindiChars = (text.match(/[\u0900-\u097F]/g) || []).length;
       var totalChars = text.replace(/\s/g, "").length || 1;
       return (hindiChars / totalChars) > 0.15 ? "hi-IN" : "en-IN";
     }
 
-    function showToast(msg, isCart) {
-      var existing = shadow.querySelector(".aicw-toast");
-      if (existing) existing.remove();
-      var t = document.createElement("div");
-      t.className = "aicw-toast" + (isCart ? " aicw-toast-cart" : "");
-      t.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' + msg;
-      root.appendChild(t);
-      setTimeout(function () { t.classList.add("aicw-toast-out"); }, isCart ? 3000 : 2000);
-      setTimeout(function () { t.remove(); }, isCart ? 3500 : 2500);
-    }
-
-    function flashCard(handle) {
-      if (!showProductGrid) return;
-      var cards = root.querySelectorAll(".aicw-pcard");
-      cards.forEach(function (card) {
-        var idx = parseInt(card.getAttribute("data-idx"));
-        var p = productCards[idx];
-        if (p && p.handle === handle) {
-          card.classList.add("aicw-pcard-just-added");
-          setTimeout(function () { card.classList.remove("aicw-pcard-just-added"); }, 1500);
-        }
-      });
-    }
-
     // ── Render ────────────────────────────────────────────────────
     function render() {
       if (!isOpen) {
-        host.style.display = "none";
-        root.innerHTML = "";
+        // Show FAB
+        root.innerHTML = '<button class="aicw-fab" aria-label="Open assistant">' + ICONS.mic + '</button>';
+        root.querySelector(".aicw-fab").addEventListener("click", function () {
+          isOpen = true;
+          persistState();
+          render();
+          triggerWelcome();
+        });
         return;
       }
-      host.style.display = "block";
 
-      // Avatar state
-      var avatarClass = "";
+      // Determine mic state
       var micIcon = ICONS.mic;
       var micClass = "idle";
       var statusText = "Tap to speak";
+      var subText = title;
 
       if (isWelcomeLoading) {
-        avatarClass = "speaking";
-        micClass = "processing";
         micIcon = '<div class="aicw-spinner"></div>';
-        statusText = "Loading your assistant...";
+        micClass = "processing";
+        statusText = "Loading...";
+        subText = "Setting up your assistant";
       } else if (voiceState === "listening") {
-        avatarClass = "listening";
         micIcon = ICONS.micOff;
         micClass = "listening";
-        statusText = "Listening... speak now";
+        statusText = "Listening...";
+        subText = "Speak now";
       } else if (voiceState === "processing") {
-        avatarClass = "";
         micIcon = '<div class="aicw-spinner"></div>';
         micClass = "processing";
         statusText = voiceStatusText || "Thinking...";
+        subText = "";
       } else if (voiceState === "speaking") {
-        avatarClass = "speaking";
         micIcon = ICONS.voice;
         micClass = "speaking";
         statusText = "Speaking...";
+        subText = "";
       }
 
-      var transcriptHtml = voiceTranscript
-        ? '<div class="aicw-transcript">"' + voiceTranscript + '"</div>'
-        : '';
+      var waveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
 
-      var navHtml = "";
-      if (pendingNavigation && (voiceState === "speaking" || voiceState === "processing")) {
-        navHtml = '<div class="aicw-transcript">Navigating to store page after response...</div>';
-      }
-
-      var bodyHtml;
-
-      if (showProductGrid && productCards.length > 1) {
-        var cardsHtml = productCards.map(function (p, idx) {
-          var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
-          if (p.comparePrice && p.comparePrice > p.price) {
-            priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span><span class="aicw-pcard-old">₹' + p.comparePrice + '</span>';
-          }
-          var discountBadge = '';
-          if (p.comparePrice && p.comparePrice > p.price) {
-            var pct = Math.round(((p.comparePrice - p.price) / p.comparePrice) * 100);
-            discountBadge = '<span class="aicw-pcard-badge">' + pct + '% OFF</span>';
-          }
-          var atcClass = inCartHandles[p.handle] ? 'aicw-pcard-atc in-cart' : 'aicw-pcard-atc';
-          var atcText = inCartHandles[p.handle] ? '✓ In Cart' : 'Add to Cart';
-          return '\
-            <div class="aicw-pcard" data-idx="' + idx + '">\
-              <div class="aicw-pcard-img-wrap">\
-                ' + (p.image ? '<img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" />' : '<div class="aicw-pcard-placeholder"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div>') + '\
-                ' + discountBadge + '\
-              </div>\
-              <div class="aicw-pcard-body">\
-                <div class="aicw-pcard-name">' + p.name + '</div>\
-                <div>' + priceHtml + '</div>\
-                <button class="' + atcClass + '" data-atc="' + idx + '">' + atcText + '</button>\
-              </div>\
-            </div>';
-        }).join("");
-
-        var gridMicIcon = micIcon;
-        var gridMicClass = micClass;
-        var gridStatusText = statusText;
-        if (voiceState === "idle" && !isWelcomeLoading) {
-          gridStatusText = "Tap to speak";
-        }
-        var gridWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
-
-        bodyHtml = '\
-          <div style="padding: 10px 12px 4px; display: flex; align-items: center; justify-content: space-between;">\
-            <div style="display: flex; align-items: center; gap: 8px;">\
-              <button class="aicw-cancel-btn aicw-back-btn" style="padding: 4px 12px;">← Back</button>\
-              <span style="font-size: 13px; font-weight: 600; color: #374151;">Recommended for you</span>\
-            </div>\
+      // Build floating bar only (no panel, no overlay)
+      var barHtml = '\
+        <div class="aicw-floating-bar">\
+          <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+          <div class="aicw-bar-info">\
+            <div class="aicw-bar-status">' + statusText + '</div>\
+            ' + (subText ? '<div class="aicw-bar-sub">' + subText + '</div>' : '') + '\
+            ' + waveformHtml + '\
           </div>\
-          <div class="aicw-product-grid">' + cardsHtml + '</div>\
-          <div class="aicw-bottom-bar">\
-            <button class="aicw-mic-btn small ' + gridMicClass + '" aria-label="Toggle microphone">' + gridMicIcon + '</button>\
-            <div class="aicw-bar-info">\
-              <div class="aicw-bar-status">' + gridStatusText + '</div>\
-              ' + gridWaveformHtml + '\
-            </div>\
-          </div>';
-      } else {
-        bodyHtml = '\
-          <div class="aicw-avatar-area">\
-            <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
-            <div class="aicw-avatar-status">' + statusText + '</div>\
-            <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
-            ' + (isWelcomeLoading ? '<div class="aicw-loading-dots"><span></span><span></span><span></span></div>' : '') + '\
-            ' + transcriptHtml + navHtml + '\
-            <div style="margin-top: 24px;">\
-              <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-            </div>\
-          </div>';
-      }
-
-      root.innerHTML = '\
-        <div class="aicw-panel">\
-          <div class="aicw-header">\
-            <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
-            <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
-          </div>' + bodyHtml + '\
-          <div class="aicw-powered">Powered by AI</div>\
+          <button class="aicw-close-btn" aria-label="Close">' + ICONS.close + '</button>\
         </div>';
 
-      // Bind close
-      root.querySelector(".aicw-close").addEventListener("click", function () {
-        closeWidget();
-      });
+      // Keep existing bubbles/toasts, only replace the bar
+      var existingBubble = root.querySelector(".aicw-transcript-bubble");
+      var existingToast = root.querySelector(".aicw-toast");
+      root.innerHTML = barHtml;
+      if (existingBubble) root.appendChild(existingBubble);
+      if (existingToast) root.appendChild(existingToast);
 
-      // Bind back button
-      var backBtn = root.querySelector(".aicw-back-btn");
-      if (backBtn) backBtn.addEventListener("click", function () {
-        showProductGrid = false;
-        productCards = [];
-        setVoiceState("idle", "");
-        setTimeout(startListening, 300);
-      });
-
-      // Bind product card clicks — navigate to real Shopify PDP
-      root.querySelectorAll(".aicw-pcard").forEach(function (card) {
-        card.addEventListener("click", function (e) {
-          if (e.target.closest("[data-atc]")) return;
-          var idx = parseInt(card.getAttribute("data-idx"));
-          var p = productCards[idx];
-          if (p && p.handle) {
-            persistState();
-            window.location.href = "/products/" + p.handle;
-          }
-        });
-      });
-
-      // Bind add to cart buttons
-      root.querySelectorAll("[data-atc]").forEach(function (btn) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var idx = parseInt(btn.getAttribute("data-atc"));
-          var p = productCards[idx];
-          if (!p || inCartHandles[p.handle]) return;
-          btn.textContent = "Adding...";
-          btn.className = "aicw-pcard-atc adding";
-          if (p.variantId) {
-            shopifyAddToCart(p.variantId).then(function (ok) {
-              if (ok) {
-                inCartHandles[p.handle] = true;
-                btn.textContent = "✓ In Cart";
-                btn.className = "aicw-pcard-atc in-cart";
-                showToast(p.name + " added to cart!");
-              } else {
-                btn.textContent = "Add to Cart";
-                btn.className = "aicw-pcard-atc";
-              }
-            });
-          } else {
-            addToCartByProduct(p.name, p.link).then(function (result) {
-              if (result.success) {
-                inCartHandles[p.handle] = true;
-                btn.textContent = "✓ In Cart";
-                btn.className = "aicw-pcard-atc in-cart";
-                showToast(p.name + " added to cart!");
-              } else {
-                btn.textContent = "Add to Cart";
-                btn.className = "aicw-pcard-atc";
-              }
-            });
-          }
-        });
-      });
-
-      // Bind mic
-      root.querySelectorAll(".aicw-mic-btn").forEach(function (btn) {
-        if (!isWelcomeLoading && (voiceState === "idle" || voiceState === "listening")) {
-          btn.addEventListener("click", onMicToggle);
-        }
-      });
+      // Bind events
+      root.querySelector(".aicw-close-btn").addEventListener("click", closeWidget);
+      var micBtn = root.querySelector(".aicw-mic-btn");
+      if (!isWelcomeLoading && (voiceState === "idle" || voiceState === "listening")) {
+        micBtn.addEventListener("click", onMicToggle);
+      }
 
       // Waveform
       if (voiceState === "listening" && analyserNode) startWaveform();
     }
 
-    // Auto-restore: if widget was open on previous page, resume
+    // ── Auto-restore ─────────────────────────────────────────────
     if (isOpen && savedSession) {
       var pageCtx = detectPageContext();
-      console.log("[AI Widget] Restoring session from previous page, page:", pageCtx.pageType);
+      console.log("[AI Widget] Restoring session, page:", pageCtx.pageType);
       render();
       if (voiceMessages.length > 0) {
-        // Send a contextual nudge based on the new page
         var contextNudge = null;
         if (pageCtx.pageType === "product" && pageCtx.productHandle) {
           contextNudge = "User has navigated to product page: " + pageCtx.productHandle + ". Briefly acknowledge this product and offer help.";
