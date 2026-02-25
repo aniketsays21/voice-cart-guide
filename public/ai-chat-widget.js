@@ -54,13 +54,40 @@
       display: flex; align-items: center; justify-content: center;\
       margin-bottom: 16px; position: relative;\
       box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25);\
+      transition: transform 0.3s ease;\
     }\
     .aicw-avatar-circle svg { width: 48px; height: 48px; color: #fff; }\
-    .aicw-avatar-circle.speaking { animation: aicw-avatar-pulse 1.5s ease-in-out infinite; }\
-    .aicw-avatar-circle.listening { animation: aicw-avatar-pulse 0.8s ease-in-out infinite; }\
-    @keyframes aicw-avatar-pulse {\
+    .aicw-avatar-circle.speaking {\
+      animation: aicw-avatar-pulse-speak 1.5s ease-in-out infinite;\
+    }\
+    .aicw-avatar-circle.speaking::before {\
+      content: ''; position: absolute; inset: -14px; border-radius: 50%;\
+      border: 3px solid " + primaryColor + "; opacity: 0.4;\
+      animation: aicw-ring-expand 2s ease-in-out infinite;\
+    }\
+    .aicw-avatar-circle.speaking::after {\
+      content: ''; position: absolute; inset: -28px; border-radius: 50%;\
+      border: 2px solid " + primaryColor + "; opacity: 0.2;\
+      animation: aicw-ring-expand 2s ease-in-out 0.5s infinite;\
+    }\
+    .aicw-avatar-circle.listening { animation: aicw-avatar-pulse-listen 0.8s ease-in-out infinite; }\
+    .aicw-avatar-circle.listening::before {\
+      content: ''; position: absolute; inset: -10px; border-radius: 50%;\
+      border: 2px solid #ef4444; opacity: 0.5;\
+      animation: aicw-ring-expand 1.2s ease-in-out infinite;\
+    }\
+    @keyframes aicw-avatar-pulse-speak {\
       0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25); }\
-      50% { transform: scale(1.08); box-shadow: 0 12px 48px rgba(108, 59, 235, 0.4); }\
+      50% { transform: scale(1.1); box-shadow: 0 16px 56px rgba(108, 59, 235, 0.5); }\
+    }\
+    @keyframes aicw-avatar-pulse-listen {\
+      0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(108, 59, 235, 0.25); }\
+      50% { transform: scale(1.06); box-shadow: 0 12px 40px rgba(108, 59, 235, 0.35); }\
+    }\
+    @keyframes aicw-ring-expand {\
+      0% { transform: scale(0.9); opacity: 0.5; }\
+      50% { transform: scale(1.1); opacity: 0.15; }\
+      100% { transform: scale(0.9); opacity: 0.5; }\
     }\
     .aicw-avatar-status {\
       font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 8px;\
@@ -132,6 +159,24 @@
     .aicw-product-grid {\
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;\
       padding: 10px 12px; overflow-y: auto; flex: 1;\
+      animation: aicw-grid-slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;\
+    }\
+    .aicw-pcard {\
+      animation: aicw-card-pop 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;\
+    }\
+    .aicw-pcard:nth-child(1) { animation-delay: 0.05s; }\
+    .aicw-pcard:nth-child(2) { animation-delay: 0.1s; }\
+    .aicw-pcard:nth-child(3) { animation-delay: 0.15s; }\
+    .aicw-pcard:nth-child(4) { animation-delay: 0.2s; }\
+    .aicw-pcard:nth-child(5) { animation-delay: 0.25s; }\
+    .aicw-pcard:nth-child(6) { animation-delay: 0.3s; }\
+    @keyframes aicw-grid-slide-up {\
+      from { opacity: 0; transform: translateY(40px); }\
+      to { opacity: 1; transform: translateY(0); }\
+    }\
+    @keyframes aicw-card-pop {\
+      from { opacity: 0; transform: scale(0.85) translateY(20px); }\
+      to { opacity: 1; transform: scale(1) translateY(0); }\
     }\
     .aicw-pcard {\
       border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;\
