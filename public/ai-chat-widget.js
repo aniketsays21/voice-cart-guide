@@ -1,6 +1,6 @@
 /**
  * AI Chat Widget — Voice-First Shopping Assistant with Native Shopify Display (IIFE)
- * v2.0 — Avatar-first flow, live catalog from Shopify, native product navigation
+ * v2.1 — Auto-start flow, no Start/End call buttons
  */
 (function () {
   "use strict";
@@ -221,27 +221,7 @@
     .aicw-toast.aicw-toast-cart {\
       background: #16a34a; font-size: 14px; padding: 12px 20px;\
     }\
-    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }\
-    /* Start Call button */\
-    .aicw-start-btn {\
-      width: 100%; max-width: 200px; padding: 14px 32px; border: none; border-radius: 999px;\
-      background: #16a34a; color: #fff; font-size: 16px; font-weight: 700;\
-      cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;\
-      display: flex; align-items: center; justify-content: center; gap: 8px;\
-      box-shadow: 0 4px 16px rgba(22, 163, 74, 0.3);\
-    }\
-    .aicw-start-btn:hover { transform: scale(1.05); box-shadow: 0 6px 24px rgba(22, 163, 74, 0.4); }\
-    .aicw-start-btn svg { width: 20px; height: 20px; }\
-    /* End Call button */\
-    .aicw-end-call-btn {\
-      padding: 8px 20px; border: none; border-radius: 999px;\
-      background: #ef4444; color: #fff; font-size: 13px; font-weight: 600;\
-      cursor: pointer; transition: transform 0.2s, background 0.2s;\
-      display: flex; align-items: center; justify-content: center; gap: 6px;\
-      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);\
-    }\
-    .aicw-end-call-btn:hover { background: #dc2626; transform: scale(1.05); }\
-    .aicw-end-call-btn svg { width: 14px; height: 14px; }";
+    .aicw-toast.aicw-toast-cart svg { width: 18px; height: 18px; }";
   }
 
   // ── Shopify helpers ────────────────────────────────────────────────
@@ -377,13 +357,12 @@
     var sessionId = generateSessionId();
     var conversationId = null;
     var isOpen = false;
-    var callActive = false; // NEW: pre-call state
     var pendingActions = [];
-    var shopifyCatalog = []; // client-fetched products
-    var inCartHandles = {}; // track handles added to cart
-    var pendingNavigation = null; // URL to navigate to after TTS
-    var productCards = []; // enriched product cards for multi-product display
-    var showProductGrid = false; // whether to show product grid view
+    var shopifyCatalog = [];
+    var inCartHandles = {};
+    var pendingNavigation = null;
+    var productCards = [];
+    var showProductGrid = false;
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -401,8 +380,6 @@
     var waveformRafId = 0;
     var welcomeTriggered = false;
     var isWelcomeLoading = false;
-
-    // Product enrichment from catalog (kept for add_to_cart lookups)
 
     // Fetch catalog on init if Shopify
     if (isShopifyPlatform) {
@@ -426,7 +403,6 @@
             }
             break;
           case "open_product":
-            // Handled in onChatComplete via enrichAction + productCards
             break;
           case "navigate_to_checkout":
             shopifyGoToCheckout();
@@ -495,7 +471,6 @@
       return "";
     }
 
-    // MIME normalization helper — strips codecs suffix, normalizes to base type
     function normalizeMime(rawMime) {
       if (!rawMime) return "audio/webm";
       var lower = rawMime.toLowerCase().split(";")[0].trim();
@@ -505,10 +480,11 @@
       return "audio/webm";
     }
 
-    var sttFailCount = 0; // track consecutive STT format failures
-    var maxRecordingTimeout = null; // safety timeout for stuck recordings
+    var sttFailCount = 0;
+    var maxRecordingTimeout = null;
 
     function startListening() {
+      if (!isOpen) return; // Don't listen if widget closed
       audioChunks = [];
       voiceTranscript = "";
       console.log("[AI Widget] startListening called, voiceState:", voiceState);
@@ -530,14 +506,13 @@
           if (blob.size < 500) {
             console.log("[AI Widget] Audio too small, ignoring. Size:", blob.size);
             setVoiceState("idle", "Didn't catch that. Listening again...");
-            if (callActive) setTimeout(startListening, 1500);
+            if (isOpen) setTimeout(startListening, 1500);
             return;
           }
           processAudio(blob);
         };
-        mediaRecorder.start(250); // timeslice to ensure ondataavailable fires during recording
+        mediaRecorder.start(250);
 
-        // Max recording timeout safeguard (10s) — auto-stop if VAD never fires
         if (maxRecordingTimeout) clearTimeout(maxRecordingTimeout);
         maxRecordingTimeout = setTimeout(function () {
           if (voiceState === "listening") {
@@ -637,16 +612,16 @@
             } else {
               setVoiceState("idle", "Didn't catch that. Listening again...");
             }
-            if (callActive) setTimeout(startListening, 1500);
+            if (isOpen) setTimeout(startListening, 1500);
             return;
           }
           var transcript = sttResult.transcript;
           if (!transcript || !transcript.trim()) {
             setVoiceState("idle", "Didn't catch that. Listening again...");
-            if (callActive) setTimeout(startListening, 1500);
+            if (isOpen) setTimeout(startListening, 1500);
             return;
           }
-          sttFailCount = 0; // reset on success
+          sttFailCount = 0;
           voiceTranscript = transcript;
           setVoiceState("processing", "Thinking...");
           render();
@@ -656,14 +631,13 @@
           console.error("STT error:", err);
           sttFailCount++;
           setVoiceState("idle", "Didn't catch that. Listening again...");
-          if (callActive) setTimeout(startListening, 1500);
+          if (isOpen) setTimeout(startListening, 1500);
         });
       };
       reader.readAsDataURL(blob);
     }
 
     function sendToChat(query) {
-      // Build request with client products and native display flag
       var requestBody = {
         messages: voiceMessages.map(function (m) { return { role: m.role, content: m.content }; }),
         sessionId: sessionId,
@@ -725,22 +699,19 @@
         setVoiceState("idle", "Connection error. Retrying...");
         isWelcomeLoading = false;
         render();
-        // Auto-retry listening after 3 seconds
         setTimeout(function () {
-          if (voiceState === "idle") startListening();
+          if (isOpen && voiceState === "idle") startListening();
         }, 3000);
       });
     }
 
     function lookupCatalog(handle, name) {
       if (!shopifyCatalog.length) return null;
-      // Match by handle first
       if (handle) {
         for (var i = 0; i < shopifyCatalog.length; i++) {
           if (shopifyCatalog[i].handle === handle) return shopifyCatalog[i];
         }
       }
-      // Fuzzy match by name
       if (name) {
         var lower = name.toLowerCase();
         for (var i = 0; i < shopifyCatalog.length; i++) {
@@ -775,42 +746,32 @@
       var actions = extractActions(fullResponse);
       pendingNavigation = null;
       
-      // Collect open_product actions
       var openProductActions = actions.filter(function (a) { return a.type === "open_product" && (a.product_handle || a.product_link); });
-      
-      // Determine if we had a grid showing before this response
       var hadGrid = showProductGrid;
       
       if (openProductActions.length > 1 && isShopifyPlatform) {
-        // Multiple products — build/refresh product cards for grid display
         productCards = [];
         openProductActions.forEach(function (action) {
           var enriched = enrichAction(action);
           productCards.push(enriched);
         });
-        // Grid will be shown after TTS
       } else if (openProductActions.length === 1) {
-        // Single product — navigate to product page after TTS
         var action = openProductActions[0];
         var handle = action.product_handle || extractHandle(action.product_link);
         pendingNavigation = handle ? "/products/" + handle : action.product_link;
         showProductGrid = false;
         productCards = [];
       } else if (openProductActions.length === 0 && hadGrid) {
-        // No product actions in response — check if it's a cart/nav action
         var hasNavAction = actions.some(function (a) {
           return a.type === "navigate_to_checkout" || a.type === "navigate_to_cart";
         });
         var hasCartAction = actions.some(function (a) { return a.type === "add_to_cart"; });
         if (!hasNavAction && !hasCartAction) {
-          // Pure conversation, no product context — hide grid
           showProductGrid = false;
           productCards = [];
         }
-        // If add_to_cart or nav, keep grid visible (will update cards in-place)
       }
       
-      // Handle other actions
       actions.forEach(function (action) {
         if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
@@ -822,7 +783,7 @@
                   inCartHandles[handleToMark] = true;
                   showToast(enriched.name + " added to cart! ✓", true);
                   flashCard(handleToMark);
-                  render(); // Re-render to update card state
+                  render();
                 }
               });
             } else {
@@ -885,19 +846,16 @@
             if (productCards.length > 1) {
               showProductGrid = true;
               setVoiceState("idle", "");
-              // Auto-start listening so user can keep talking over the grid
               setTimeout(startListening, 800);
               return;
             }
-            // Auto-listen after any response (including cart confirmations)
             setVoiceState("idle", "");
             setTimeout(startListening, 500);
           }
         };
-      currentAudio.onerror = function () {
+        currentAudio.onerror = function () {
           currentAudio = null;
           if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
-          // Still execute actions even if TTS fails
           executePendingActions();
           setVoiceState("idle", "");
           setTimeout(startListening, 1000);
@@ -926,7 +884,6 @@
       if (welcomeTriggered) return;
       welcomeTriggered = true;
       isWelcomeLoading = true;
-      callActive = true;
       pendingNavigation = null;
       render();
 
@@ -935,9 +892,8 @@
       sendToChat(welcomeQuery);
     }
 
-    function endCall() {
+    function closeWidget() {
       cancelVoice();
-      callActive = false;
       welcomeTriggered = false;
       isWelcomeLoading = false;
       voiceMessages = [];
@@ -990,44 +946,11 @@
       }
       host.style.display = "block";
 
-      // End Call button HTML (always visible when call is active)
-      var endCallHtml = callActive
-        ? '<button class="aicw-end-call-btn" aria-label="End Call"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.88.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>End Call</button>'
-        : '';
-
-      // Pre-call screen: show Start button before call is active
-      if (!callActive) {
-        root.innerHTML = '\
-          <div class="aicw-panel">\
-            <div class="aicw-header">\
-              <div class="aicw-header-title">' + ICONS.mic + '<span>' + title + '</span></div>\
-              <button class="aicw-close" aria-label="Close">' + ICONS.close + '</button>\
-            </div>\
-            <div class="aicw-avatar-area">\
-              <div class="aicw-avatar-circle">' + ICONS.voice + '</div>\
-              <div class="aicw-avatar-status">Your AI Shopping Assistant</div>\
-              <div class="aicw-avatar-sub">Tap Start to begin your voice shopping experience</div>\
-              <div style="margin-top: 32px;">\
-                <button class="aicw-start-btn">' + ICONS.mic + ' Start</button>\
-              </div>\
-            </div>\
-            <div class="aicw-powered">Powered by AI</div>\
-          </div>';
-
-        root.querySelector(".aicw-close").addEventListener("click", function () {
-          isOpen = false; render();
-        });
-        root.querySelector(".aicw-start-btn").addEventListener("click", function () {
-          triggerWelcome();
-        });
-        return;
-      }
-
       // Avatar state
       var avatarClass = "";
       var micIcon = ICONS.mic;
       var micClass = "idle";
-      var statusText = "Listening...";
+      var statusText = "Tap to speak";
 
       if (isWelcomeLoading) {
         avatarClass = "speaking";
@@ -1055,7 +978,6 @@
         ? '<div class="aicw-transcript">"' + voiceTranscript + '"</div>'
         : '';
 
-      // Navigation indicator
       var navHtml = "";
       if (pendingNavigation && (voiceState === "speaking" || voiceState === "processing")) {
         navHtml = '<div class="aicw-transcript">Navigating to store page after response...</div>';
@@ -1064,7 +986,6 @@
       var bodyHtml;
 
       if (showProductGrid && productCards.length > 1) {
-        // Product grid view with persistent mic bar at bottom
         var cardsHtml = productCards.map(function (p, idx) {
           var priceHtml = '<span class="aicw-pcard-price">₹' + p.price + '</span>';
           if (p.comparePrice && p.comparePrice > p.price) {
@@ -1095,7 +1016,7 @@
         var gridMicClass = micClass;
         var gridStatusText = statusText;
         if (voiceState === "idle" && !isWelcomeLoading) {
-          gridStatusText = "Listening...";
+          gridStatusText = "Tap to speak";
         }
         var gridWaveformHtml = voiceState === "listening" ? '<canvas class="aicw-bar-waveform"></canvas>' : '';
 
@@ -1113,7 +1034,6 @@
               <div class="aicw-bar-status">' + gridStatusText + '</div>\
               ' + gridWaveformHtml + '\
             </div>\
-            ' + endCallHtml + '\
           </div>';
       } else {
         bodyHtml = '\
@@ -1126,7 +1046,6 @@
             <div style="margin-top: 24px;">\
               <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
             </div>\
-            <div style="margin-top: 16px;">' + endCallHtml + '</div>\
           </div>';
       }
 
@@ -1139,9 +1058,9 @@
           <div class="aicw-powered">Powered by AI</div>\
         </div>';
 
-      // Bind close (same as end call during active call)
+      // Bind close
       root.querySelector(".aicw-close").addEventListener("click", function () {
-        endCall();
+        closeWidget();
       });
 
       // Bind back button
@@ -1153,10 +1072,10 @@
         setTimeout(startListening, 300);
       });
 
-      // Bind product card clicks (navigate to product page)
+      // Bind product card clicks
       root.querySelectorAll(".aicw-pcard").forEach(function (card) {
         card.addEventListener("click", function (e) {
-          if (e.target.closest("[data-atc]")) return; // don't navigate on ATC click
+          if (e.target.closest("[data-atc]")) return;
           var idx = parseInt(card.getAttribute("data-idx"));
           var p = productCards[idx];
           if (p && p.link) shopifyNavigate(p.link);
@@ -1200,16 +1119,11 @@
         });
       });
 
-      // Bind mic (disabled during welcome load)
+      // Bind mic
       root.querySelectorAll(".aicw-mic-btn").forEach(function (btn) {
         if (!isWelcomeLoading && (voiceState === "idle" || voiceState === "listening")) {
           btn.addEventListener("click", onMicToggle);
         }
-      });
-
-      // Bind End Call buttons
-      root.querySelectorAll(".aicw-end-call-btn").forEach(function (btn) {
-        btn.addEventListener("click", function () { endCall(); });
       });
 
       // Waveform
@@ -1219,8 +1133,12 @@
     render();
 
     return {
-      open: function () { isOpen = true; render(); },
-      close: function () { cancelVoice(); isOpen = false; render(); },
+      open: function () {
+        isOpen = true;
+        render();
+        triggerWelcome();
+      },
+      close: function () { closeWidget(); },
       destroy: function () { cancelVoice(); host.remove(); }
     };
   }
