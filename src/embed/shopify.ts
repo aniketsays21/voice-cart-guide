@@ -24,13 +24,39 @@ export function extractHandle(url: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Full product data returned from Shopify */
+export interface ShopifyProductData {
+  title: string;
+  handle: string;
+  price: string;
+  compare_at_price: string | null;
+  image: string | null;
+  available: boolean;
+  variantId: number | null;
+}
+
 /** Fetch the first variant ID for a product handle via Shopify's JSON API */
 export async function fetchVariantId(handle: string): Promise<number | null> {
+  const product = await fetchProductByHandle(handle);
+  return product?.variantId ?? null;
+}
+
+/** Fetch full product data by handle from Shopify's storefront JSON API */
+export async function fetchProductByHandle(handle: string): Promise<ShopifyProductData | null> {
   try {
     const resp = await fetch(`/products/${handle}.js`);
     if (!resp.ok) return null;
     const data = await resp.json();
-    return data.variants?.[0]?.id ?? null;
+    const variant = data.variants?.[0];
+    return {
+      title: data.title,
+      handle: data.handle,
+      price: variant ? (variant.price / 100).toFixed(2) : "0",
+      compare_at_price: variant?.compare_at_price ? (variant.compare_at_price / 100).toFixed(2) : null,
+      image: data.images?.[0] || data.featured_image || null,
+      available: variant?.available ?? data.available ?? true,
+      variantId: variant?.id ?? null,
+    };
   } catch {
     return null;
   }

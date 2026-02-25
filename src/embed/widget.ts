@@ -5,7 +5,7 @@
 import { WidgetConfig, Msg, ActionBlock } from "./types";
 import { getWidgetStyles } from "./styles";
 import { ICONS } from "./icons";
-import { isShopify, addToCartByProduct, shopifyNavigate, shopifyGoToCheckout, shopifyGoToCart } from "./shopify";
+import { isShopify, addToCartByProduct, shopifyNavigate, shopifyGoToCheckout, shopifyGoToCart, fetchProductByHandle, extractHandle } from "./shopify";
 
 function generateSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -23,9 +23,12 @@ function miniMarkdown(text: string): string {
 }
 
 // Parse :::product and :::action blocks
+// Track product cards for live enrichment on Shopify
+let productCardCounter = 0;
+const pendingEnrichments: { cardId: string; handle: string }[] = [];
+
 function parseContent(content: string, onAction?: (action: ActionBlock) => void): string {
   const parts: string[] = [];
-  // Combined regex for both product and action blocks
   const regex = /:::(product|action)\n([\s\S]*?):::/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -49,7 +52,12 @@ function parseContent(content: string, onAction?: (action: ActionBlock) => void)
     });
 
     if (blockType === "product") {
-      productBuffer.push(renderProductCard(props));
+      const cardId = `pc-${++productCardCounter}`;
+      const handle = props.link ? extractHandle(props.link) : null;
+      if (handle) {
+        pendingEnrichments.push({ cardId, handle });
+      }
+      productBuffer.push(renderProductCard(props, cardId));
     } else if (blockType === "action" && onAction) {
       onAction(props as unknown as ActionBlock);
     }
@@ -62,11 +70,12 @@ function parseContent(content: string, onAction?: (action: ActionBlock) => void)
   return parts.join("");
 }
 
-function renderProductCard(p: Record<string, string>): string {
+function renderProductCard(p: Record<string, string>, cardId?: string): string {
   const img = p.image ? `<img class="aicw-product-img" src="${p.image}" alt="${p.name || ""}" loading="lazy" onerror="this.style.display='none'"/>` : "";
   const price = p.discount_price || p.price || "";
   const old = p.discount_price && p.price ? `<span class="aicw-product-old">${p.price}</span>` : "";
-  return `<div class="aicw-product">${img}<div class="aicw-product-body"><div class="aicw-product-name">${p.name || "Product"}</div><div class="aicw-product-price">${price}${old}</div><a class="aicw-product-link" href="${p.link || "#"}" target="_blank" rel="noopener">${ICONS.link} View Details</a></div></div>`;
+  const idAttr = cardId ? ` data-product-card="${cardId}"` : "";
+  return `<div class="aicw-product"${idAttr}>${img}<div class="aicw-product-body"><div class="aicw-product-name">${p.name || "Product"}</div><div class="aicw-product-price">${price}${old}</div><a class="aicw-product-link" href="${p.link || "#"}" target="_blank" rel="noopener">${ICONS.link} View Details</a></div></div>`;
 }
 
 export function createWidget(config: WidgetConfig) {
@@ -142,7 +151,47 @@ export function createWidget(config: WidgetConfig) {
     }
   }
 
-  // Create host element
+  // Enrich product cards with live Shopify data
+  async function enrichProductCards() {
+    if (!isShopifyPlatform || pendingEnrichments.length === 0) {
+      pendingEnrichments.length = 0;
+      return;
+    }
+    const items = [...pendingEnrichments];
+    pendingEnrichments.length = 0;
+
+    for (const { cardId, handle } of items) {
+      try {
+        const product = await fetchProductByHandle(handle);
+        if (!product) continue;
+        const card = root.querySelector(`[data-product-card="${cardId}"]`);
+        if (!card) continue;
+
+        // Update image
+        const img = card.querySelector(".aicw-product-img") as HTMLImageElement;
+        if (img && product.image) {
+          img.src = product.image;
+        } else if (!img && product.image) {
+          const newImg = document.createElement("img");
+          newImg.className = "aicw-product-img";
+          newImg.src = product.image;
+          newImg.alt = product.title;
+          newImg.loading = "lazy";
+          card.insertBefore(newImg, card.firstChild);
+        }
+
+        // Update price
+        const priceEl = card.querySelector(".aicw-product-price");
+        if (priceEl) {
+          const livePrice = `₹${product.price}`;
+          const oldPrice = product.compare_at_price ? `<span class="aicw-product-old">₹${product.compare_at_price}</span>` : "";
+          priceEl.innerHTML = `${livePrice}${oldPrice}`;
+        }
+      } catch {}
+    }
+  }
+
+
   const host = document.createElement("div");
   host.id = "ai-chat-widget";
   host.style.position = "fixed";
@@ -311,6 +360,8 @@ export function createWidget(config: WidgetConfig) {
     } finally {
       isLoading = false;
       render();
+      // Enrich product cards with live Shopify data
+      enrichProductCards();
       // Execute any Shopify actions parsed from the response
       executePendingActions();
     }
