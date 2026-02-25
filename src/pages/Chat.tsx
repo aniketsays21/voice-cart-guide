@@ -106,7 +106,18 @@ const Chat: React.FC = () => {
   // Avatar state
   const [avatarState, setAvatarState] = useState<"idle" | "speaking" | "listening">("idle");
   const [showProducts, setShowProducts] = useState(false);
-  const pendingProductsRef = useRef<boolean>(false);
+  const isSpeakingRef = useRef(false);
+
+  // Stop any playing TTS (barge-in)
+  const stopTTS = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    isSpeakingRef.current = false;
+    setAvatarState("idle");
+  }, []);
 
   // TTS with avatar sync
   const playTTS = useCallback(async (text: string): Promise<void> => {
@@ -116,51 +127,39 @@ const Chat: React.FC = () => {
       if (!clean) return;
       const hasHindi = /[\u0900-\u097F]/.test(clean);
       setAvatarState("speaking");
+      isSpeakingRef.current = true;
       const resp = await fetch(TTS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
         body: JSON.stringify({ text: clean, target_language_code: hasHindi ? "hi-IN" : "en-IN" }),
       });
-      if (!resp.ok) { setAvatarState("idle"); return; }
+      if (!resp.ok) { setAvatarState("idle"); isSpeakingRef.current = false; return; }
       const data = await resp.json();
-      if (!data.audio) { setAvatarState("idle"); return; }
-      const audio = new Audio(`data:audio/wav;base64,${data.audio}`);
+      if (!data.audio) { setAvatarState("idle"); isSpeakingRef.current = false; return; }
+      const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
       audioRef.current = audio;
       
       return new Promise<void>((resolve) => {
         audio.onended = () => {
+          isSpeakingRef.current = false;
           setAvatarState("idle");
-          // If products are pending, show them now
-          if (pendingProductsRef.current) {
-            pendingProductsRef.current = false;
-            setShowProducts(true);
-          }
           resolve();
         };
         audio.onerror = () => {
+          isSpeakingRef.current = false;
           setAvatarState("idle");
-          if (pendingProductsRef.current) {
-            pendingProductsRef.current = false;
-            setShowProducts(true);
-          }
           resolve();
         };
         audio.play().catch(() => {
+          isSpeakingRef.current = false;
           setAvatarState("idle");
-          if (pendingProductsRef.current) {
-            pendingProductsRef.current = false;
-            setShowProducts(true);
-          }
           resolve();
         });
       });
     } catch (e) {
       console.error("TTS error:", e);
+      isSpeakingRef.current = false;
       setAvatarState("idle");
-      if (pendingProductsRef.current) {
-        pendingProductsRef.current = false;
-        setShowProducts(true);
-      }
     }
   }, [voiceEnabled]);
 
@@ -257,19 +256,9 @@ const Chat: React.FC = () => {
 
       if (actions.length > 0) handleActions(actions, parsed);
       
-      // If there are products, mark them pending and show after TTS
-      if (parsed.length > 0) {
-        pendingProductsRef.current = true;
-        if (commentary) {
-          await playTTS(commentary);
-        } else {
-          pendingProductsRef.current = false;
-          setShowProducts(true);
-        }
-      } else {
-        setShowProducts(true);
-        if (commentary) playTTS(commentary);
-      }
+      // Show products immediately while TTS plays simultaneously
+      setShowProducts(true);
+      if (commentary) playTTS(commentary);
 
       // Auto-restart listening if continuous mode is on
       if (shouldRestartRef.current) {
@@ -302,7 +291,8 @@ const Chat: React.FC = () => {
   // Internal start recording
   const startRecordingInternal = useCallback(async () => {
     try {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      // Barge-in: stop any playing TTS when user starts speaking
+      stopTTS();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -362,7 +352,7 @@ const Chat: React.FC = () => {
       setState("listening");
       vad.start(stream);
     } catch (e) { console.error("Mic access error:", e); }
-  }, [send, resultGroups.length, vad]);
+  }, [send, resultGroups.length, vad, stopTTS]);
 
   const startRecording = useCallback(() => {
     shouldRestartRef.current = true;
@@ -373,10 +363,11 @@ const Chat: React.FC = () => {
   const stopEverything = useCallback(() => {
     shouldRestartRef.current = false;
     setContinuousListening(false);
+    stopTTS();
     setAvatarState("idle");
     doStopRecording();
     setState(resultGroups.length > 0 ? "results" : "idle");
-  }, [doStopRecording, resultGroups.length]);
+  }, [doStopRecording, resultGroups.length, stopTTS]);
 
   const toggleVoice = () => {
     setVoiceEnabled((v) => !v);
@@ -452,7 +443,7 @@ const Chat: React.FC = () => {
 
         if (actions.length > 0) handleActions(actions, parsed);
 
-        // Wait for greeting TTS to finish before showing products
+        // Show products immediately while greeting TTS plays
         await greetingPromise;
         setShowProducts(true);
       } catch (e) {
@@ -500,8 +491,8 @@ const Chat: React.FC = () => {
             </div>
           )}
 
-          {/* Mic button in avatar phase */}
-          {!isWelcomeLoading && !isProcessing && avatarState !== "speaking" && (
+          {/* Mic button in avatar phase - always visible so user can interrupt */}
+          {!isWelcomeLoading && !isProcessing && (
             <div className="mt-4">
               <VoiceButton
                 isListening={continuousListening && state === "listening"}
