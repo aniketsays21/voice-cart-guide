@@ -495,6 +495,19 @@
       return "";
     }
 
+    // MIME normalization helper — strips codecs suffix, normalizes to base type
+    function normalizeMime(rawMime) {
+      if (!rawMime) return "audio/webm";
+      var lower = rawMime.toLowerCase().split(";")[0].trim();
+      if (lower.indexOf("webm") !== -1) return "audio/webm";
+      if (lower.indexOf("ogg") !== -1) return "audio/ogg";
+      if (lower.indexOf("mp4") !== -1 || lower.indexOf("m4a") !== -1 || lower.indexOf("aac") !== -1) return "audio/mp4";
+      return "audio/webm";
+    }
+
+    var sttFailCount = 0; // track consecutive STT format failures
+    var maxRecordingTimeout = null; // safety timeout for stuck recordings
+
     function startListening() {
       audioChunks = [];
       voiceTranscript = "";
@@ -523,6 +536,15 @@
           processAudio(blob);
         };
         mediaRecorder.start(250); // timeslice to ensure ondataavailable fires during recording
+
+        // Max recording timeout safeguard (10s) — auto-stop if VAD never fires
+        if (maxRecordingTimeout) clearTimeout(maxRecordingTimeout);
+        maxRecordingTimeout = setTimeout(function () {
+          if (voiceState === "listening") {
+            console.log("[AI Widget] Max recording timeout (10s), auto-stopping");
+            stopMic();
+          }
+        }, 10000);
 
         audioContext = new AudioContext();
         var source = audioContext.createMediaStreamSource(stream);
@@ -592,7 +614,10 @@
     }
 
     function processAudio(blob) {
-      console.log("[AI Widget] processAudio called, blob size:", blob.size, "type:", blob.type);
+      if (maxRecordingTimeout) { clearTimeout(maxRecordingTimeout); maxRecordingTimeout = null; }
+      var rawMime = blob.type || "audio/webm";
+      var normalizedMime = normalizeMime(rawMime);
+      console.log("[AI Widget] processAudio — blob size:", blob.size, "rawMime:", rawMime, "normalized:", normalizedMime);
       setVoiceState("processing", "Processing...");
       var reader = new FileReader();
       reader.onloadend = function () {
@@ -601,14 +626,27 @@
         fetch(sttUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-          body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: blob.type || "audio/webm" })
+          body: JSON.stringify({ audio: base64, sessionId: sessionId, audioMimeType: normalizedMime, audioMimeTypeRaw: rawMime })
         }).then(function (r) { return r.json(); }).then(function (sttResult) {
+          if (sttResult.error) {
+            console.warn("[AI Widget] STT returned error:", sttResult.error);
+            sttFailCount++;
+            if (sttFailCount >= 2) {
+              setVoiceState("idle", "Audio format issue. Retrying...");
+              sttFailCount = 0;
+            } else {
+              setVoiceState("idle", "Didn't catch that. Listening again...");
+            }
+            if (callActive) setTimeout(startListening, 1500);
+            return;
+          }
           var transcript = sttResult.transcript;
           if (!transcript || !transcript.trim()) {
             setVoiceState("idle", "Didn't catch that. Listening again...");
             if (callActive) setTimeout(startListening, 1500);
             return;
           }
+          sttFailCount = 0; // reset on success
           voiceTranscript = transcript;
           setVoiceState("processing", "Thinking...");
           render();
@@ -616,6 +654,7 @@
           sendToChat(transcript);
         }).catch(function (err) {
           console.error("STT error:", err);
+          sttFailCount++;
           setVoiceState("idle", "Didn't catch that. Listening again...");
           if (callActive) setTimeout(startListening, 1500);
         });
@@ -1180,7 +1219,7 @@
     render();
 
     return {
-      open: function () { isOpen = true; render(); triggerWelcome(); },
+      open: function () { isOpen = true; render(); },
       close: function () { cancelVoice(); isOpen = false; render(); },
       destroy: function () { cancelVoice(); host.remove(); }
     };

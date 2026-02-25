@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { audio, language_code, sessionId, audioMimeType } = body;
+    const { audio, language_code, sessionId, audioMimeType, audioMimeTypeRaw } = body;
 
     // Input validation
     if (!audio || typeof audio !== "string") {
@@ -76,11 +76,38 @@ Deno.serve(async (req) => {
     // Decode base64 audio to binary
     const binaryAudio = Uint8Array.from(atob(audio), (c) => c.charCodeAt(0));
 
+    // Sanitize MIME: lowercase, strip ;codecs=...
+    function sanitizeMime(raw: string | undefined): string {
+      if (!raw) return "audio/webm";
+      const base = raw.toLowerCase().split(";")[0].trim();
+      if (base.includes("webm")) return "audio/webm";
+      if (base.includes("ogg")) return "audio/ogg";
+      if (base.includes("mp4") || base.includes("m4a") || base.includes("aac")) return "audio/mp4";
+      return "audio/webm";
+    }
+
+    // Container sniffing from first bytes
+    function sniffContainer(bytes: Uint8Array): string | null {
+      if (bytes.length < 12) return null;
+      // WebM/Matroska: starts with 0x1A45DFA3
+      if (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return "audio/webm";
+      // OGG: starts with "OggS"
+      if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return "audio/ogg";
+      // MP4: "ftyp" at offset 4
+      if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return "audio/mp4";
+      return null;
+    }
+
+    const clientMime = sanitizeMime(audioMimeType);
+    const sniffedMime = sniffContainer(binaryAudio);
+    const resolvedMime = sniffedMime || clientMime;
+    const ext = resolvedMime.includes("mp4") ? ".mp4" : resolvedMime.includes("ogg") ? ".ogg" : ".webm";
+
+    console.log(`STT audio: rawMime=${audioMimeTypeRaw || "n/a"}, clientNorm=${clientMime}, sniffed=${sniffedMime || "n/a"}, resolved=${resolvedMime}, bytes=${binaryAudio.length}`);
+
     // Build multipart form data
     const formData = new FormData();
-    const mimeType = audioMimeType || "audio/webm";
-    const ext = mimeType.includes("mp4") ? ".mp4" : mimeType.includes("ogg") ? ".ogg" : ".webm";
-    formData.append("file", new Blob([binaryAudio], { type: mimeType }), "recording" + ext);
+    formData.append("file", new Blob([binaryAudio], { type: resolvedMime }), "recording" + ext);
     formData.append("model", "saaras:v3");
     formData.append("mode", "transcribe");
     if (language_code) {
