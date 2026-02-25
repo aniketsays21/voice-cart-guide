@@ -326,6 +326,7 @@
     var pendingActions = [];
     var shopifyCatalog = []; // client-fetched products
     var inCartHandles = {}; // track handles added to cart
+    var pendingNavigation = null; // URL to navigate to after TTS
 
     // Voice state
     var voiceState = "idle"; // idle | listening | processing | speaking
@@ -344,8 +345,7 @@
     var welcomeTriggered = false;
     var isWelcomeLoading = false;
 
-    // Product cards enriched from catalog
-    var productCards = []; // [{name, handle, link, image, price, comparePrice, variantId, available}]
+    // Product enrichment from catalog (kept for add_to_cart lookups)
 
     // Fetch catalog on init if Shopify
     if (isShopifyPlatform) {
@@ -650,17 +650,20 @@
       voiceMessages.push({ role: "assistant", content: fullResponse });
 
       var actions = extractActions(fullResponse);
-      productCards = [];
+      pendingNavigation = null;
+      
       actions.forEach(function (action) {
-        if (action.type === "open_product" && action.product_name) {
-          productCards.push(enrichAction(action));
+        if (action.type === "navigate_to_search" && action.search_query) {
+          pendingNavigation = "/search?q=" + encodeURIComponent(action.search_query) + "&type=product";
+        } else if (action.type === "open_product" && action.product_link) {
+          var handle = action.product_handle || extractHandle(action.product_link);
+          pendingNavigation = handle ? "/products/" + handle : action.product_link;
         } else if (action.type === "add_to_cart") {
           if (isShopifyPlatform && action.product_name) {
             var enriched = enrichAction(action);
             if (enriched.variantId) {
               shopifyAddToCart(enriched.variantId).then(function (ok) {
                 if (ok) inCartHandles[enriched.handle] = true;
-                render();
               });
             } else {
               addToCartByProduct(action.product_name, action.product_link).then(function (result) {
@@ -669,9 +672,9 @@
             }
           }
         } else if (action.type === "navigate_to_checkout") {
-          if (isShopifyPlatform) shopifyGoToCheckout();
+          if (isShopifyPlatform) pendingNavigation = "/checkout";
         } else if (action.type === "navigate_to_cart") {
-          if (isShopifyPlatform) shopifyGoToCart();
+          if (isShopifyPlatform) pendingNavigation = "/cart";
         }
       });
 
@@ -680,6 +683,10 @@
       // TTS
       var ttsText = cleanForTTS(fullResponse);
       if (!ttsText) {
+        if (pendingNavigation && isShopifyPlatform) {
+          setTimeout(function () { window.location.href = pendingNavigation; pendingNavigation = null; }, 500);
+          return;
+        }
         setVoiceState("idle", "");
         render();
         setTimeout(startListening, 500);
@@ -705,16 +712,23 @@
         currentAudio.onended = function () {
           currentAudio = null;
           if (voiceState === "speaking") {
+            if (pendingNavigation && isShopifyPlatform) {
+              window.location.href = pendingNavigation;
+              pendingNavigation = null;
+              return;
+            }
             setVoiceState("idle", "");
             setTimeout(startListening, 500);
           }
         };
         currentAudio.onerror = function () {
           currentAudio = null;
+          if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
           setVoiceState("idle", "");
           setTimeout(startListening, 1000);
         };
         currentAudio.play().catch(function () {
+          if (pendingNavigation && isShopifyPlatform) { window.location.href = pendingNavigation; pendingNavigation = null; return; }
           setVoiceState("idle", "");
           setTimeout(startListening, 1000);
         });
@@ -734,7 +748,7 @@
       if (welcomeTriggered) return;
       welcomeTriggered = true;
       isWelcomeLoading = true;
-      productCards = [];
+      pendingNavigation = null;
       render();
 
       var welcomeQuery = "Hi, show me top selling Bella Vita products";
@@ -781,28 +795,10 @@
         ? '<div class="aicw-transcript">"' + voiceTranscript + '"</div>'
         : '';
 
-      // Product cards section
-      var productCardsHtml = "";
-      if (productCards.length > 0) {
-        var cardsItems = productCards.map(function (p, idx) {
-          var imgHtml = p.image ? '<div class="aicw-pcard-img-wrap"><img class="aicw-pcard-img" src="' + p.image + '" alt="' + p.name + '" loading="lazy" onerror="this.style.display=\'none\'"/>' : '<div class="aicw-pcard-img-wrap">';
-          // Discount badge
-          var badgeHtml = "";
-          if (p.comparePrice && p.comparePrice > p.price && p.price > 0) {
-            var discount = Math.round((1 - p.price / p.comparePrice) * 100);
-            badgeHtml = '<div class="aicw-pcard-badge">' + discount + '% OFF</div>';
-          }
-          imgHtml += badgeHtml + '</div>';
-          // Price
-          var priceHtml = p.price ? '₹' + p.price : '';
-          var oldPriceHtml = (p.comparePrice && p.comparePrice > p.price) ? '<span class="aicw-pcard-old">₹' + p.comparePrice + '</span>' : '';
-          // Button
-          var isInCart = inCartHandles[p.handle];
-          var btnClass = isInCart ? 'aicw-pcard-atc in-cart' : 'aicw-pcard-atc';
-          var btnText = isInCart ? '✓ In Cart' : 'Add to Cart';
-          return '<div class="aicw-pcard" data-card-idx="' + idx + '">' + imgHtml + '<div class="aicw-pcard-body"><div class="aicw-pcard-name">' + p.name + '</div><div class="aicw-pcard-price">' + priceHtml + oldPriceHtml + '</div><button class="' + btnClass + '" data-atc-idx="' + idx + '">' + btnText + '</button></div></div>';
-        }).join("");
-        productCardsHtml = '<div class="aicw-product-grid">' + cardsItems + '</div>';
+      // Navigation indicator
+      var navHtml = "";
+      if (pendingNavigation && (voiceState === "speaking" || voiceState === "processing")) {
+        navHtml = '<div class="aicw-transcript">Navigating to store page after response...</div>';
       }
 
       // Cancel button
@@ -810,32 +806,17 @@
         ? '<button class="aicw-cancel-btn">Cancel</button>'
         : '';
 
-      var bottomBarStatus = voiceStatusText || (voiceState === "idle" ? "Tap mic to ask..." : "");
-
-      var hasProducts = productCards.length > 0;
-
-      var bodyHtml;
-      if (hasProducts) {
-        bodyHtml = productCardsHtml + '\
-          <div class="aicw-bottom-bar">\
-            <button class="aicw-mic-btn small ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-            <div class="aicw-bar-info">\
-              <div class="aicw-bar-status">' + bottomBarStatus + '</div>\
-              <canvas class="aicw-bar-waveform"></canvas>\
-            </div>' + cancelBtn + '\
-          </div>';
-      } else {
-        bodyHtml = '\
-          <div class="aicw-avatar-area">\
-            <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
-            <div class="aicw-avatar-status">' + statusText + '</div>\
-            <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
-            ' + transcriptHtml + '\
-            <div style="margin-top: 24px;">\
-              <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
-            </div>\
-          </div>';
-      }
+      var bodyHtml = '\
+        <div class="aicw-avatar-area">\
+          <div class="aicw-avatar-circle ' + avatarClass + '">' + ICONS.voice + '</div>\
+          <div class="aicw-avatar-status">' + statusText + '</div>\
+          <div class="aicw-avatar-sub">Your AI Shopping Assistant</div>\
+          ' + transcriptHtml + navHtml + '\
+          <div style="margin-top: 24px;">\
+            <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+          </div>\
+          ' + (cancelBtn ? '<div style="margin-top: 8px;">' + cancelBtn + '</div>' : '') + '\
+        </div>';
 
       root.innerHTML = '\
         <div class="aicw-panel">\
@@ -862,40 +843,9 @@
 
       // Bind cancel
       var cancelEl = root.querySelector(".aicw-cancel-btn");
-      if (cancelEl) cancelEl.addEventListener("click", cancelVoice);
-
-      // Bind Add to Cart buttons
-      root.querySelectorAll(".aicw-pcard-atc").forEach(function (btn) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var idx = parseInt(btn.getAttribute("data-atc-idx"), 10);
-          var card = productCards[idx];
-          if (!card || !card.variantId || inCartHandles[card.handle]) return;
-          btn.textContent = "Adding...";
-          btn.classList.add("adding");
-          shopifyAddToCart(card.variantId).then(function (ok) {
-            if (ok) {
-              inCartHandles[card.handle] = true;
-              btn.textContent = "✓ In Cart";
-              btn.classList.remove("adding");
-              btn.classList.add("in-cart");
-            } else {
-              btn.textContent = "Add to Cart";
-              btn.classList.remove("adding");
-            }
-          });
-        });
-      });
-
-      // Bind product card clicks to navigate
-      root.querySelectorAll(".aicw-pcard").forEach(function (el) {
-        el.addEventListener("click", function () {
-          var idx = parseInt(el.getAttribute("data-card-idx"), 10);
-          var card = productCards[idx];
-          if (card && card.link && card.link !== "#" && isShopifyPlatform) {
-            shopifyNavigate(card.link);
-          }
-        });
+      if (cancelEl) cancelEl.addEventListener("click", function () {
+        pendingNavigation = null;
+        cancelVoice();
       });
 
       // Waveform
