@@ -1,118 +1,86 @@
 
 
-# Convert Voice Bot to Floating Overlay on Shopify Pages
+# Show Real Shopify Product Collections for Category Queries
 
-## Summary
+## Problem
+When a user asks "show me party perfumes" or "recommend beach vibes perfumes", the bot currently only describes products conversationally and asks the user to pick one. It doesn't show them on the actual Shopify store. The user wants to see 5-6 real product cards on the Shopify website.
 
-Transform the voice bot from a full-screen overlay (that renders its own product grid and avatar UI) into a **compact floating mic bar** that sits at the bottom of the real Shopify website. The bot will control actual Shopify pages -- navigating to real product pages, adding to cart via Shopify's API, and triggering checkout -- while staying visible and active throughout the entire journey.
+## Solution
+Add a new `navigate_to_search` action type that the LLM can output for category/collection queries. This will navigate the user to Shopify's native search results or collection pages, showing real product cards on the store.
 
-## Current Problem
-
-The widget currently takes over the entire screen (`position: fixed; inset: 0`), rendering its own avatar, product grids, and UI. This means:
-- Users can't see the actual Shopify store while using the bot
-- Product cards are rendered inside the widget instead of showing real Shopify pages
-- The bot feels separate from the store experience
-
-## What Changes
-
-### 1. Widget Layout: Full-Screen to Floating Bar (`public/ai-chat-widget.js`)
-
-**Remove:**
-- Full-screen overlay (`host.style.inset = "0"`)
-- Avatar circle and avatar area
-- In-widget product card grid
-- Header bar that takes full width
-
-**Replace with:**
-- A compact floating pill bar fixed at the bottom center (~56px tall, max-width 380px)
-- Contains: mic button + status text (Listening/Speaking/Tap to speak)
-- A small transcript bubble appears above the bar temporarily when the user speaks or the bot responds
-- The bar is always visible and doesn't block Shopify content
+## How It Works
 
 ```text
-+------------------------------------------+
-|                                          |
-|        Actual Shopify Page               |
-|        (PDP, Cart, Collections)          |
-|                                          |
-+------------------------------------------+
-|   ["User said: show me perfumes"]        |  <-- transcript bubble (fades)
-|   [mic] Listening...          [x close]  |  <-- floating bar
-+------------------------------------------+
+User says: "Show me party perfumes"
+     |
+     v
+LLM describes 3-5 products conversationally (voice)
+     +
+LLM outputs: :::action
+             type: navigate_to_search
+             query: party perfume
+             :::
+     |
+     v
+Widget navigates to /search?q=party+perfume
+     |
+     v
+User sees real Shopify search results (5-6 product cards)
+with the voice bot still active at the bottom
 ```
 
-### 2. Navigation: Real Shopify Pages Instead of Widget Grid
+## Changes
 
-**Single product recommendation:**
-- Navigate to `/products/{handle}` (already works, keep as-is)
+### 1. System Prompt (`supabase/functions/chat/index.ts`)
 
-**Multiple product recommendations:**
-- Instead of rendering a product grid inside the widget, navigate to Shopify search: `/search?q={query}` or a collection page
-- The bot speaks about the products conversationally and lets the user browse the real store
+Update the floating overlay mode instructions:
+- For category/abstract queries ("party perfumes", "gifts under 1000", "beach vibes"), output a `navigate_to_search` action with a clean search query
+- The bot still describes top picks conversationally via voice, but simultaneously navigates the user to see all matching products on the store
+- For collection-specific queries, use `navigate_to_collection` if a known collection handle matches (e.g., "men's perfumes" -> `/collections/men`)
 
-**Add to Cart:**
-- Call `/cart/add.js` (already works), show a toast on the real page, stay on current page
-
-**Checkout:**
-- Click the native checkout button on the cart page, or navigate to `/checkout`
-- Since another tool handles checkout, the bot's job ends here
-
-### 3. System Prompt Update (`supabase/functions/chat/index.ts`)
-
-Update the prompt to reflect overlay mode:
-- When recommending multiple products, describe them conversationally (name, price, key feature) and ask which one the user wants to see, rather than outputting multiple `open_product` action blocks
-- For browsing categories, use a single `open_product` action that navigates to the collection or search page
-- Remove instructions about rendering product grids
-
-### 4. CSS Overhaul (within `public/ai-chat-widget.js`)
-
-Replace all the avatar, panel, product-grid, and full-screen styles with:
-- Floating bar styles: `position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%)`
-- Transcript bubble: appears above the bar, auto-fades after 4 seconds
-- Minimal footprint so it doesn't interfere with Shopify's native UI
-- Subtle backdrop/shadow so it's visible on any page background
-
-### 5. Session Persistence (Already Works)
-
-The `sessionStorage`-based persistence already handles page navigations. No changes needed here -- the bot will restore conversation history and resume listening on each new Shopify page.
-
-## Technical Details
-
-### Floating Bar HTML Structure
-```text
-<div class="aicw-floating-bar">
-  <button class="aicw-mic-btn {state}">mic icon</button>
-  <span class="aicw-status">Listening...</span>
-  <button class="aicw-close-btn">x</button>
-</div>
-<div class="aicw-transcript-bubble">transcript text</div>  <!-- temporary -->
+New action format:
+```
+:::action
+type: navigate_to_search
+query: party perfume for men
+:::
 ```
 
-### Multi-Product Flow Change
-Currently: AI returns multiple `open_product` actions, widget renders grid
-New: AI describes products in speech, uses a single action to navigate to search/collection. For example:
-- User: "Show me perfumes for men"
-- Bot speaks: "Yahan kuch best perfumes hain -- CEO Man, Fresh Guy, aur Royal Oud. Kaunsa dekhna hai?"
-- If user says "CEO Man dikhao" -> navigate to `/products/ceo-man`
-- If user says "sab dikhao" -> navigate to `/search?q=perfume+for+men` or `/collections/men`
+Or for known collections:
+```
+:::action
+type: navigate_to_collection
+collection_handle: men
+:::
+```
 
-### Checkout Trigger
-On the cart page, when user says "checkout karo":
-- Bot clicks the native checkout button: `document.querySelector('[name="checkout"], .cart__checkout-button, [type="submit"]').click()`
-- Or falls back to `window.location.href = "/checkout"`
+### 2. Widget Action Handler (`public/ai-chat-widget.js`)
+
+- Add handling for `navigate_to_search` action: sets `pendingNavigation = "/search?q=" + encodeURIComponent(action.query)`
+- Add handling for `navigate_to_collection` action: sets `pendingNavigation = "/collections/" + action.collection_handle`
+- Update `extractActions` to parse the new action types
+- Remove the current logic that builds a search URL from the raw user message (lines 678-688) since the LLM will now provide a clean, optimized search query
+
+### 3. Prompt Refinements
+
+The LLM prompt will instruct:
+- Single specific product query -> `open_product` (navigate to PDP) -- unchanged
+- Category/abstract query -> `navigate_to_search` with an optimized Shopify search query + conversational voice description
+- Known collection -> `navigate_to_collection` with the collection handle
+- The search query should be clean and optimized for Shopify's search (e.g., "party perfume men" not the full user sentence)
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `public/ai-chat-widget.js` | Replace full-screen overlay + avatar + product grid with compact floating mic bar; remove product grid rendering; use Shopify search/collection navigation for multi-product; add transcript bubble; add native checkout button click |
-| `supabase/functions/chat/index.ts` | Update system prompt: describe products conversationally instead of grid format; prefer single navigation actions; add instruction for search/collection navigation |
+| `public/ai-chat-widget.js` | Add `navigate_to_search` and `navigate_to_collection` action handlers; remove old multi-product search fallback logic |
+| `supabase/functions/chat/index.ts` | Add new action types to system prompt with examples; instruct LLM to use `navigate_to_search` for category queries |
 
 ## What Stays the Same
-- STT pipeline (ElevenLabs Scribe v2) -- unchanged
-- TTS pipeline (ElevenLabs Multilingual v2, Lily voice) -- unchanged
-- Chat edge function streaming -- unchanged
-- Cart add/navigate actions -- unchanged
-- Session persistence via sessionStorage -- unchanged
-- Page context detection -- unchanged
+- Single product navigation (open_product) -- unchanged
+- Add to cart flow -- unchanged
+- Cart/checkout navigation -- unchanged
+- Voice pipeline (STT/TTS) -- unchanged
+- Session persistence -- unchanged
+- Floating bar UI -- unchanged
 
