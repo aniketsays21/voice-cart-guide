@@ -45,9 +45,7 @@ const INJECTION_PATTERNS = [
 
 function sanitizeUserMessage(content: string): string {
   let cleaned = content;
-  // Strip format markers that could inject fake product cards
   cleaned = cleaned.replace(/:::/g, "");
-  // Strip injection patterns
   for (const pattern of INJECTION_PATTERNS) {
     cleaned = cleaned.replace(pattern, "[filtered]");
   }
@@ -62,7 +60,6 @@ async function checkRateLimit(
   maxPerMinute: number
 ): Promise<boolean> {
   const windowStart = new Date(Date.now() - 60_000).toISOString();
-
   const { data } = await supabase
     .from("rate_limits")
     .select("id, request_count")
@@ -98,7 +95,6 @@ async function checkDailyUsage(
   maxPerDay: number
 ): Promise<boolean> {
   const today = new Date().toISOString().split("T")[0];
-
   const { data } = await supabase
     .from("daily_usage")
     .select("id, request_count")
@@ -124,9 +120,7 @@ async function checkDailyUsage(
   return true;
 }
 
-// --- Shopify product fetching ---
-const SHOPIFY_STORE_URL = "https://bella-vita-test.myshopify.com";
-
+// --- Shopify product fetching (server-side fallback) ---
 interface ShopifyVariant {
   id: number;
   title: string;
@@ -147,17 +141,18 @@ interface ShopifyProduct {
   variants: ShopifyVariant[];
 }
 
-function mapShopifyProduct(p: ShopifyProduct) {
+function mapShopifyProduct(p: ShopifyProduct, storeUrl: string) {
   const firstVariant = p.variants?.[0];
   const price = firstVariant ? parseFloat(firstVariant.price) : 0;
   const compareAtPrice = firstVariant?.compare_at_price ? parseFloat(firstVariant.compare_at_price) : null;
   const image = p.images?.[0]?.src || null;
-  const link = `${SHOPIFY_STORE_URL}/products/${p.handle}`;
+  const link = `${storeUrl}/products/${p.handle}`;
   const description = p.body_html ? p.body_html.replace(/<[^>]*>/g, "").substring(0, 300) : null;
 
   return {
     id: String(p.id),
     name: p.title,
+    handle: p.handle,
     price: compareAtPrice && compareAtPrice > price ? compareAtPrice : price,
     salePrice: compareAtPrice && compareAtPrice > price ? price : price,
     description,
@@ -165,62 +160,111 @@ function mapShopifyProduct(p: ShopifyProduct) {
     external_link: link,
     category: p.product_type || "General",
     tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? (p.tags as string).split(", ") : []),
-    rating: 4.5, // Shopify doesn't have native ratings
+    rating: 4.5,
     available: firstVariant?.available ?? true,
   };
 }
 
-async function fetchShopifyProducts(): Promise<any[]> {
+async function fetchShopifyProducts(storeDomain?: string): Promise<any[]> {
+  const storeUrl = storeDomain 
+    ? (storeDomain.startsWith("http") ? storeDomain : `https://${storeDomain}`)
+    : "https://bella-vita-test.myshopify.com";
+  
   const allProducts: any[] = [];
   let page = 1;
   const limit = 250;
 
   while (true) {
-    const url = `${SHOPIFY_STORE_URL}/products.json?limit=${limit}&page=${page}`;
-    console.log(`Fetching Shopify products page ${page}...`);
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      console.error(`Shopify fetch failed: ${resp.status}`);
+    const url = `${storeUrl}/products.json?limit=${limit}&page=${page}`;
+    console.log(`Fetching Shopify products from ${storeUrl} page ${page}...`);
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        console.error(`Shopify fetch failed: ${resp.status} for ${storeUrl}`);
+        break;
+      }
+      const data = await resp.json();
+      const products: ShopifyProduct[] = data.products || [];
+      if (products.length === 0) break;
+
+      for (const p of products) {
+        allProducts.push(mapShopifyProduct(p, storeUrl));
+      }
+      if (products.length < limit) break;
+      page++;
+      if (page > 10) break;
+    } catch (e) {
+      console.error(`Shopify fetch error for ${storeUrl}:`, e);
       break;
     }
-    const data = await resp.json();
-    const products: ShopifyProduct[] = data.products || [];
-    if (products.length === 0) break;
-
-    for (const p of products) {
-      allProducts.push(mapShopifyProduct(p));
-    }
-    if (products.length < limit) break;
-    page++;
-    // Safety limit
-    if (page > 10) break;
   }
 
-  console.log(`Fetched ${allProducts.length} products from Shopify`);
+  console.log(`Fetched ${allProducts.length} products from Shopify (${storeUrl})`);
   return allProducts;
+}
+
+// --- Map client-sent products to internal format ---
+function mapClientProducts(clientProducts: any[], storeDomain: string): any[] {
+  const storeUrl = storeDomain.startsWith("http") ? storeDomain : `https://${storeDomain}`;
+  return clientProducts.map((p: any) => {
+    const firstVariant = p.variants?.[0];
+    const price = firstVariant ? parseFloat(String(firstVariant.price)) / 100 : 0;
+    const compareAtPrice = firstVariant?.compare_at_price ? parseFloat(String(firstVariant.compare_at_price)) / 100 : null;
+    const image = p.images?.[0]?.src || p.images?.[0] || p.featured_image || null;
+    const handle = p.handle || "";
+    const link = `${storeUrl}/products/${handle}`;
+    const description = p.body_html ? p.body_html.replace(/<[^>]*>/g, "").substring(0, 300) : (p.description || null);
+    const tags = Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? p.tags.split(", ") : []);
+
+    return {
+      id: String(p.id),
+      name: p.title,
+      handle,
+      price: compareAtPrice && compareAtPrice > price ? compareAtPrice : price,
+      salePrice: compareAtPrice && compareAtPrice > price ? price : price,
+      description,
+      image_url: image,
+      external_link: link,
+      category: p.product_type || "General",
+      tags,
+      rating: 4.5,
+      available: firstVariant?.available ?? p.available ?? true,
+    };
+  });
 }
 
 // --- Product cache ---
 let cachedProducts: any[] | null = null;
 let cachedDiscounts: any[] | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+let cachedStoreDomain = "";
+const CACHE_TTL = 5 * 60 * 1000;
 
-async function getCachedCatalog(supabase: any) {
+async function getCachedCatalog(supabase: any, storeDomain?: string, clientProducts?: any[]) {
   const now = Date.now();
-  if (cachedProducts && cachedDiscounts && now - cacheTimestamp < CACHE_TTL) {
+  const domainKey = storeDomain || "default";
+  
+  // If client sent products, use them directly (freshest data from Shopify storefront)
+  if (clientProducts && clientProducts.length > 0) {
+    console.log(`Using ${clientProducts.length} client-provided products from ${domainKey}`);
+    const products = mapClientProducts(clientProducts, storeDomain || "");
+    const { data: discounts } = await supabase.from("discounts").select("*").eq("is_active", true);
+    return { products, discounts: discounts || [] };
+  }
+  
+  if (cachedProducts && cachedDiscounts && now - cacheTimestamp < CACHE_TTL && cachedStoreDomain === domainKey) {
     return { products: cachedProducts, discounts: cachedDiscounts };
   }
 
-  // Try Shopify first, fall back to database
   let products: any[] = [];
   try {
-    products = await fetchShopifyProducts();
+    products = await fetchShopifyProducts(storeDomain);
   } catch (e) {
     console.error("Shopify fetch failed, falling back to database:", e);
   }
 
   if (products.length === 0) {
+    console.log("Shopify returned 0 products, falling back to database");
     const { data } = await supabase.from("products").select("*").limit(500);
     products = data || [];
   }
@@ -230,6 +274,7 @@ async function getCachedCatalog(supabase: any) {
   cachedProducts = products;
   cachedDiscounts = discounts || [];
   cacheTimestamp = now;
+  cachedStoreDomain = domainKey;
   return { products: cachedProducts, discounts: cachedDiscounts };
 }
 
@@ -307,7 +352,6 @@ function buildFilteredCatalog(
 ) {
   const { detectedCategories, maxBudget, detectedGender } = intent;
 
-  // Category filter
   let filtered = products;
   if (detectedCategories.length > 0) {
     const catFiltered = products.filter((p) =>
@@ -316,7 +360,6 @@ function buildFilteredCatalog(
     if (catFiltered.length > 0) filtered = catFiltered;
   }
 
-  // Enrich with discount prices
   const enriched = filtered.map((p: any) => {
     const applicableDiscounts = discounts.filter(
       (d: any) => d.product_id === p.id || d.applicable_category === p.category
@@ -330,10 +373,8 @@ function buildFilteredCatalog(
     return { ...p, salePrice, bestDiscount };
   });
 
-  // Budget filter
   let result = maxBudget ? enriched.filter((p) => p.salePrice <= maxBudget) : enriched;
 
-  // Gender filter
   if (detectedGender && detectedGender !== "unisex") {
     const gFiltered = result.filter((p: any) => {
       const text = `${p.name} ${p.description || ""} ${(p.tags || []).join(" ")}`.toLowerCase();
@@ -361,15 +402,16 @@ function formatCatalog(catalogProducts: any[]): string {
       if (p.tags && p.tags.length > 0) lines.push(`  Tags: ${p.tags.join(", ")}`);
       if (p.bestDiscount) lines.push(`  Discount: ${p.bestDiscount.discount_percent}% off`);
       if (p.image_url) lines.push(`  Image: ${p.image_url}`);
+      if (p.handle) lines.push(`  Handle: ${p.handle}`);
       lines.push(`  Link: ${p.external_link}`);
       return lines.join("\n");
     })
     .join("\n\n");
 }
 
-// --- System prompt (separated from data) ---
-function buildSystemPrompt(searchContext: string): string {
-  return `You are a friendly, helpful AI voice shopping assistant for Bella Vita. You help users discover and buy products. You speak English and Hindi — always respond in the same language the user uses.
+// --- System prompt ---
+function buildSystemPrompt(searchContext: string, nativeDisplay: boolean, storeDomain: string): string {
+  const basePrompt = `You are a friendly, helpful AI voice shopping assistant for Bella Vita. You help users discover and buy products. You speak English and Hindi — always respond in the same language the user uses.
 
 WELCOME BEHAVIOR:
 - If the user's first message is a greeting or asks for top products, respond with a warm welcome in Hinglish: "Welcome to Bella Vita store, mai aapki kaise madad kar sakti hu. Ye kuch Bella Vita ke top selling products hai" and then show the top 4-6 bestselling products sorted by rating.
@@ -394,7 +436,53 @@ SMART MATCHING INSTRUCTIONS:
 - When comparing prices, ALWAYS use the Sale Price (discounted price) if available, not MRP.
 - Match user intent against product Description and Tags for deeper relevance.
 - Prioritize bestsellers and higher-rated products when multiple options match.
-- If the filtered list is small, recommend the best matches. If empty, say honestly that nothing matches and suggest alternatives.
+- If the filtered list is small, recommend the best matches. If empty, say honestly that nothing matches and suggest alternatives.`;
+
+  if (nativeDisplay) {
+    // Native Shopify display mode — no custom product cards, use action blocks
+    return `${basePrompt}
+
+INSTRUCTIONS (NATIVE SHOPIFY MODE):
+- You are running inside the Shopify storefront. Products should be browsed on Shopify's own pages, NOT in custom cards.
+- When recommending products, describe them conversationally in plain text with name, price, and a brief description.
+- For EACH product you recommend, ALWAYS include an action block to let the user open it on Shopify:
+
+:::action
+type: open_product
+product_name: Product Name
+product_link: /products/product-handle
+:::
+
+- Use the product Handle from the catalog to build the link as /products/{handle}.
+- When recommending multiple products (3+), also suggest the user can browse all results on Shopify by saying something like "You can also browse all of these on the store".
+- NEVER use :::product blocks. Only use :::action blocks.
+- When a user says "add to cart" or "buy this":
+
+:::action
+type: add_to_cart
+product_name: Product Name
+product_link: /products/product-handle
+:::
+
+- When the user says "go to checkout", "checkout":
+
+:::action
+type: navigate_to_checkout
+:::
+
+- When the user says "open my cart", "show my cart":
+
+:::action
+type: navigate_to_cart
+:::
+
+- Keep responses concise, warm, and conversational.
+- Guide users through the shopping journey, ask follow-up questions.
+- When a user is viewing a product (message starts with "[The user is viewing the product"), answer about THAT product only.`;
+  }
+
+  // Legacy mode — custom product cards
+  return `${basePrompt}
 
 INSTRUCTIONS:
 - Understand the user's needs through conversation (budget, preferences, use case)
@@ -459,7 +547,6 @@ serve(async (req) => {
   try {
     const body = await req.json();
 
-    // 1. Input validation
     const validationError = validateInput(body);
     if (validationError) {
       return new Response(JSON.stringify({ error: validationError }), {
@@ -468,10 +555,9 @@ serve(async (req) => {
       });
     }
 
-    const { messages, sessionId, conversationId } = body;
+    const { messages, sessionId, conversationId, storeDomain, clientProducts, nativeDisplay } = body;
     const effectiveSessionId = sessionId || crypto.randomUUID();
 
-    // 2. Sanitize user messages
     const sanitizedMessages = messages.map((m: any) => ({
       ...m,
       content: m.role === "user" ? sanitizeUserMessage(m.content) : m.content,
@@ -484,7 +570,6 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 3. Rate limiting (10 per minute for chat)
     const allowed = await checkRateLimit(supabase, effectiveSessionId, "chat", 10);
     if (!allowed) {
       return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait a moment." }), {
@@ -493,7 +578,6 @@ serve(async (req) => {
       });
     }
 
-    // 4. Daily usage cap (50 per day)
     const dailyAllowed = await checkDailyUsage(supabase, effectiveSessionId, "chat", 50);
     if (!dailyAllowed) {
       return new Response(JSON.stringify({ error: "Daily usage limit reached. Please try again tomorrow." }), {
@@ -502,10 +586,9 @@ serve(async (req) => {
       });
     }
 
-    // 5. Get cached product catalog
-    const { products, discounts } = await getCachedCatalog(supabase);
+    // Get catalog — prefer client-provided products, then server-side fetch
+    const { products, discounts } = await getCachedCatalog(supabase, storeDomain, clientProducts);
 
-    // 6. Extract intent and filter catalog
     const intent = extractIntent(sanitizedMessages);
     const catalogProducts = buildFilteredCatalog(products, discounts, intent);
     const productCatalog = formatCatalog(catalogProducts);
@@ -518,17 +601,15 @@ serve(async (req) => {
       `Products matched: ${catalogProducts.length} of ${products.length} total`,
     ].filter(Boolean).join(" | ");
 
-    // 7. Build prompts (separated: instructions vs data)
-    const systemPrompt = buildSystemPrompt(searchContext);
+    const isNativeDisplay = nativeDisplay === true;
+    const systemPrompt = buildSystemPrompt(searchContext, isNativeDisplay, storeDomain || "");
     const productDataMessage = {
       role: "system",
       content: `PRODUCT CATALOG DATA:\n${productCatalog || "No products match the current filters."}`,
     };
 
-    // 8. Trim conversation history to last 10 messages
     const trimmedMessages = sanitizedMessages.slice(-10);
 
-    // 9. Create or get conversation
     let convId = conversationId;
     if (!convId) {
       const { data: conv } = await supabase
@@ -539,7 +620,6 @@ serve(async (req) => {
       convId = conv?.id;
     }
 
-    // 10. Save user message
     const lastUserMessage = sanitizedMessages[sanitizedMessages.length - 1];
     if (lastUserMessage && convId) {
       await supabase.from("messages").insert({
@@ -549,7 +629,6 @@ serve(async (req) => {
       });
     }
 
-    // 11. Call AI with trimmed history
     const response = await fetch(
       "https://ai.gateway.lovable.dev/v1/chat/completions",
       {
@@ -591,7 +670,6 @@ serve(async (req) => {
       });
     }
 
-    // 12. Stream response while collecting for DB save
     const decoder = new TextDecoder();
     let fullResponse = "";
 
@@ -610,7 +688,6 @@ serve(async (req) => {
         controller.enqueue(chunk);
       },
       async flush() {
-        // Save assistant response
         if (fullResponse && convId) {
           await supabase.from("messages").insert({
             conversation_id: convId,
@@ -618,7 +695,6 @@ serve(async (req) => {
             content: fullResponse.substring(0, 5000),
           });
         }
-        // Log request
         await logRequest(supabase, effectiveSessionId, "chat", lastUserMessage?.content?.length || 0, Date.now() - startTime);
       },
     });

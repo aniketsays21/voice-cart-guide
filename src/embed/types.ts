@@ -20,6 +20,10 @@ export interface WidgetConfig {
   zIndex?: number;
   /** Platform detection — auto-detects Shopify if not specified */
   platform?: "shopify" | "generic";
+  /** Store domain passed to backend for catalog fetch */
+  storeDomain?: string;
+  /** Use native Shopify display instead of custom product cards */
+  nativeDisplay?: boolean;
 }
 
 export type Msg = { role: "user" | "assistant"; content: string };
