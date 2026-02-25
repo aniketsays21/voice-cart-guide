@@ -181,11 +181,57 @@
     }
   }
 
+  // Try to click the native Add to Cart button on a PDP
+  function clickNativeAddToCart() {
+    var selectors = [
+      '[type="submit"][name="add"]',
+      'button.product-form__submit',
+      'form[action="/cart/add"] button[type="submit"]',
+      '#AddToCart',
+      '.btn-addtocart',
+      'button[data-action="add-to-cart"]',
+      '.add-to-cart',
+      '.product-form__cart-submit',
+      'button.shopify-payment-button__button--unbranded'
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var btn = document.querySelector(selectors[i]);
+      if (btn && btn.offsetParent !== null) {
+        btn.click();
+        // Dispatch cart refresh event
+        document.dispatchEvent(new CustomEvent("cart:refresh"));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Try to click the native checkout button
+  function clickNativeCheckout() {
+    var selectors = [
+      '[name="checkout"]',
+      '.cart__checkout-button',
+      'button[type="submit"][value*="Check"]',
+      'a[href="/checkout"]',
+      '.cart__checkout',
+      '#checkout',
+      'input[name="checkout"]',
+      'button.cart__checkout'
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var btn = document.querySelector(selectors[i]);
+      if (btn && btn.offsetParent !== null) {
+        btn.click();
+        return true;
+      }
+    }
+    return false;
+  }
+
   function shopifyGoToCheckout() {
-    // Try clicking native checkout button first
-    var checkoutBtn = document.querySelector('[name="checkout"], .cart__checkout-button, [type="submit"][value*="Check"], a[href="/checkout"]');
-    if (checkoutBtn) { checkoutBtn.click(); }
-    else { window.location.href = "/checkout"; }
+    if (!clickNativeCheckout()) {
+      window.location.href = "/checkout";
+    }
   }
 
   function shopifyGoToCart() { window.location.href = "/cart"; }
@@ -681,10 +727,25 @@
             pendingNavigation = "/collections/" + action.collection_handle;
           }
         } else if (action.type === "add_to_cart") {
-          if (isShopifyPlatform && action.product_name) {
-            addToCartByProduct(action.product_name, action.product_link).then(function (result) {
-              showToast(result.message, !result.success);
-            });
+          if (isShopifyPlatform) {
+            // If on a PDP, try clicking the native Add to Cart button first
+            var onPDP = window.location.pathname.indexOf("/products/") !== -1;
+            if (onPDP) {
+              var clicked = clickNativeAddToCart();
+              if (clicked) {
+                showToast("Added to cart!", false);
+              } else if (action.product_name) {
+                // Native button not found, fall back to API
+                addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+                  showToast(result.message, !result.success);
+                });
+              }
+            } else if (action.product_name) {
+              // Not on PDP, use API approach
+              addToCartByProduct(action.product_name, action.product_link).then(function (result) {
+                showToast(result.message, !result.success);
+              });
+            }
           }
         } else if (action.type === "navigate_to_checkout") {
           if (isShopifyPlatform) pendingNavigation = "__checkout__";
