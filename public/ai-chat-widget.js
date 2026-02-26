@@ -829,6 +829,12 @@
         currentAudio = new Audio("data:" + audioMime + ";base64," + audioBase64);
         currentAudio.onended = function () {
           currentAudio = null;
+          // Navigate AFTER speaking finishes
+          if (pendingNavigation && isShopifyPlatform) {
+            persistState();
+            executeNavigation();
+            return;
+          }
           if (voiceState === "speaking") {
             setVoiceState("idle", "Tap to speak");
             setTimeout(startListening, 800);
@@ -836,15 +842,12 @@
         };
         currentAudio.onerror = function () {
           currentAudio = null;
+          if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
           setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 1000);
         };
         currentAudio.play().then(function () {
-          // Navigate simultaneously while audio plays
-          if (pendingNavigation && isShopifyPlatform) {
-            persistState();
-            executeNavigation();
-          }
+          // Audio is playing — navigation will happen in onended
         }).catch(function () {
           if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
           setVoiceState("idle", "Tap to speak");
