@@ -1,92 +1,87 @@
 
 
-# Switch to Sarvam AI for TTS and STT with Fallback Chain
+# Make the Voice Bot Smarter & More Interactive
 
-## Summary
+## 1. Give the Bot a Name & Identity
 
-Replace ElevenLabs as the primary voice provider with Sarvam AI, which offers native Indian voices (pure Hindi/Hinglish). The system will try three providers in order:
+**Name: "Priya"** — a friendly, approachable Indian name that works well in both Hindi and English contexts.
 
-1. **Sarvam AI Key 1** (primary)
-2. **Sarvam AI Key 2** (fallback)
-3. **ElevenLabs** (last resort)
+### Changes:
+- **System prompt** (`supabase/functions/chat/index.ts`): Update the welcome behavior and persona to introduce herself as "Priya" in every first interaction. Example: *"Hello! Main Priya hoon, aapki personal shopping assistant Bella Vita ke liye!"*
+- **Welcome TTS** (`src/pages/Chat.tsx`): Change the hardcoded greeting from generic text to include "Priya".
+- **Avatar label** (`src/pages/Chat.tsx`): Change "Bella Vita AI" to "Priya" in the small avatar bar.
 
-When any key returns a 429 (rate limit) or 403 (credits exhausted) error, the system automatically tries the next one.
+The system prompt will instruct the AI to respond naturally when addressed by name ("Priya, show me perfumes") and to occasionally refer to itself as Priya in conversation.
 
-## What Changes
+---
 
-### 1. Store the two Sarvam API keys as secrets
+## 2. Smart Features to Add
 
-- `SARVAM_API_KEY` already exists -- will be updated to Key 1
-- `SARVAM_API_KEY_2` -- new secret for Key 2
+### A. Conversation Memory & Personalization
+- Track user preferences within the session (e.g., "You mentioned you like woody fragrances earlier, so here's another one you might love").
+- The system prompt already gets full conversation history — we just need to instruct the AI to reference past preferences proactively.
 
-### 2. Rewrite `supabase/functions/sarvam-tts/index.ts`
+### B. Proactive Suggestions & Upselling
+- After a user adds something to cart, Priya suggests complementary products: *"CEO Man cart mein daal diya! Iske saath CEO Woman bhi try karo, couples ke liye perfect combo hai."*
+- Suggest bundles/combos when budget allows.
 
-**New flow:**
-```text
-Try Sarvam Key 1 (bulbul:v3, speaker "Ratan")
-  -> If 429/403, try Sarvam Key 2
-    -> If 429/403, try ElevenLabs
-      -> If all fail, return error
-```
+### C. Quick Voice Commands
+- Add recognition for shortcut phrases in the system prompt:
+  - "Priya, checkout karo" — navigates to checkout
+  - "Priya, cart dikhao" — opens cart
+  - "Priya, ruk jao" / "Priya, stop" — stops speaking
+  - "Priya, wapas jao" / "go back" — show previous results
+  - "Pehla wala add karo" — positional reference ("add the first one")
 
-**Sarvam TTS API call:**
-- URL: `https://api.sarvam.ai/text-to-speech`
-- Header: `api-subscription-key: <key>`
-- Body: `{ text, target_language_code: "hi-IN", model: "bulbul:v3", speaker: "Ratan", pace: 1.0 }`
-- Response: `{ audios: ["base64-wav-string"] }`
+### D. Mood/Occasion-Based Shopping
+- Priya asks follow-up questions: *"Kis occasion ke liye chahiye? Date night, office, ya casual outing?"*
+- Then filters products accordingly — this logic already exists in intent extraction but isn't prompted conversationally.
 
-The response format stays the same for the client (`{ audio, audioFormat }`), but `audioFormat` will be `"wav"` when Sarvam is used and `"mp3"` when ElevenLabs is used.
+### E. Price Negotiation Feel
+- When users say "thoda sasta dikhao" or "budget kam hai", Priya responds empathetically and finds alternatives: *"No worries! Ye dekho, same vibe hai but ₹499 mein mil jayega."*
 
-**Speaker choice:** "Ratan" -- a natural Indian male voice on bulbul:v3 that sounds authentic for Hinglish conversations. Can be changed easily.
+### F. Confirmation & Feedback Loops
+- After showing products, Priya asks: *"Inme se koi pasand aaya? Ya kuch aur try karein?"*
+- After adding to cart: *"Cart mein daal diya! Aur kuch chahiye ya checkout karein?"*
 
-### 3. Rewrite `supabase/functions/sarvam-stt/index.ts`
+---
 
-**New flow:**
-```text
-Try Sarvam Key 1 (saaras:v3, mode "transcribe")
-  -> If 429/403, try Sarvam Key 2
-    -> If 429/403, try ElevenLabs
-      -> If all fail, return error
-```
+## Technical Changes
 
-**Sarvam STT API call:**
-- URL: `https://api.sarvam.ai/speech-to-text/transcribe`
-- Multipart form: `file` (audio blob), `model: "saaras:v3"`, `language_code: "unknown"` (auto-detect)
-- Response: `{ transcript: "...", language_code: "hi-IN" }`
+### File: `supabase/functions/chat/index.ts`
 
-The response format already matches what the client expects.
+**System prompt updates (line ~462-489):**
+- Change persona intro to include the name "Priya"
+- Add instructions for:
+  - Self-introduction on first message
+  - Responding to name-based addressing
+  - Proactive follow-ups after recommendations
+  - Complementary product suggestions after cart additions
+  - Mood/occasion-based questioning
+  - Empathetic budget handling
+  - Confirmation loops after showing products
 
-### 4. Update client audio handling (`src/pages/Chat.tsx`)
+### File: `src/pages/Chat.tsx`
 
-Sarvam returns WAV audio (not MP3). The client already uses base64 data URIs for playback, so we just need to handle the `audioFormat` field:
-- If `audioFormat === "wav"` -> use `data:audio/wav;base64,...`
-- If `audioFormat === "mp3"` -> use `data:audio/mpeg;base64,...` (existing behavior)
+- **Line ~233 (welcome TTS):** Change greeting to: `"Hello! Main Priya hoon, aapki personal shopping assistant. Aaj main aapko Bella Vita ke best products dikhati hoon."`
+- **Line ~293 (avatar label):** Change `"Bella Vita AI"` to `"Priya"`
+- **Line ~295 (status text):** Change `"Speaking..."` to `"Priya is speaking..."` and `"Here are your results"` to contextual text
 
-## How Credit Exhaustion Detection Works
+### File: `src/components/assistant/TalkingAvatar.tsx`
 
-When Sarvam API credits are exhausted, they return:
-- **HTTP 429**: Too many requests / rate limit
-- **HTTP 403**: Forbidden (subscription expired or credits used up)
+- Update avatar display name if it shows text (minor cosmetic change)
 
-The edge function catches these status codes and immediately retries with the next key. Console logs will indicate which provider was used:
-```text
-TTS: Sarvam key1 failed (429), trying key2...
-TTS: Sarvam key2 failed (403), falling back to ElevenLabs...
-```
+---
 
-## Files to Modify
+## Summary of Smart Features
 
-| File | Change |
-|------|--------|
-| Secrets | Add `SARVAM_API_KEY_2`; update `SARVAM_API_KEY` to new value |
-| `supabase/functions/sarvam-tts/index.ts` | Rewrite to use Sarvam TTS as primary with fallback chain |
-| `supabase/functions/sarvam-stt/index.ts` | Rewrite to use Sarvam STT as primary with fallback chain |
-| `src/pages/Chat.tsx` | Handle `audioFormat: "wav"` in addition to `"mp3"` for playback |
-
-## What Stays the Same
-- Chat function (LLM reasoning) -- unchanged
-- Widget embed code -- unchanged
-- Rate limiting logic -- unchanged
-- Session management -- unchanged
-- All existing client UI -- unchanged
+| Feature | What Priya Does |
+|---|---|
+| Named identity | Introduces herself as "Priya", responds to her name |
+| Session memory | References earlier preferences in conversation |
+| Proactive upselling | Suggests combos after cart additions |
+| Voice shortcuts | "Priya, checkout karo", "pehla wala dikhao" |
+| Occasion shopping | Asks about occasion before recommending |
+| Budget empathy | Finds alternatives when budget is tight |
+| Confirmation loops | Asks "aur kuch?" after every action |
 
