@@ -95,6 +95,16 @@ export function createWidget(config: WidgetConfig) {
   // Detect platform: explicit config > auto-detect > generic
   const isShopifyPlatform = platform === "shopify" || (platform === undefined && isShopify());
 
+  // Auto-checkout: if we navigated to /cart with the flag, click checkout button
+  if (isShopifyPlatform && typeof sessionStorage !== "undefined") {
+    if (sessionStorage.getItem("bellaai_auto_checkout") === "1" && window.location.pathname === "/cart") {
+      sessionStorage.removeItem("bellaai_auto_checkout");
+      setTimeout(() => {
+        shopifyGoToCheckout();
+      }, 1500);
+    }
+  }
+
   const chatUrl = `${apiUrl}/functions/v1/chat`;
   const sessionId = generateSessionId();
   let conversationId: string | null = null;
