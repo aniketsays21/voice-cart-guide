@@ -106,7 +106,7 @@ export function createWidget(config: WidgetConfig) {
   // Handle parsed action blocks from AI responses — execute immediately during streaming
   function handleAction(action: ActionBlock) {
     pendingActions.push(action);
-    // Execute immediately so actions fire while Priya is still speaking
+    // Execute immediately so actions fire while Bella AI is still speaking
     executePendingActions();
   }
 
