@@ -201,15 +201,28 @@ const Chat: React.FC = () => {
               context_summary: act.context || "",
             }),
           })
-            .then((r) => r.json())
+            .then((r) => {
+              if (!r.ok) {
+                console.error("[CALLBACK] schedule-call returned non-OK:", r.status, r.statusText);
+                toast.error("Failed to schedule call.");
+                return null;
+              }
+              return r.json();
+            })
             .then((data) => {
+              if (!data) return;
               if (data.success) {
+                console.log("[CALLBACK] Call scheduled successfully:", data);
                 toast.success(`Call scheduled for ${act.scheduledTime}!`, { duration: 4000 });
               } else {
+                console.error("[CALLBACK] schedule-call returned error:", data);
                 toast.error("Failed to schedule call. Please try again.");
               }
             })
-            .catch(() => toast.error("Failed to schedule call."));
+            .catch((err) => {
+              console.error("[CALLBACK] Failed to invoke schedule-call:", err);
+              toast.error("Failed to schedule call.");
+            });
         }
       } else if (act.action === "open_product") {
         const product = products.find(p => p.name.toLowerCase().includes((act.productName || "").toLowerCase()));
