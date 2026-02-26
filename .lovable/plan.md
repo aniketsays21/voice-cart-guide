@@ -1,87 +1,140 @@
 
 
-# Make the Voice Bot Smarter & More Interactive
+# Schedule Callback Calls via ElevenLabs Agent
 
-## 1. Give the Bot a Name & Identity
+## Overview
 
-**Name: "Priya"** — a friendly, approachable Indian name that works well in both Hindi and English contexts.
-
-### Changes:
-- **System prompt** (`supabase/functions/chat/index.ts`): Update the welcome behavior and persona to introduce herself as "Priya" in every first interaction. Example: *"Hello! Main Priya hoon, aapki personal shopping assistant Bella Vita ke liye!"*
-- **Welcome TTS** (`src/pages/Chat.tsx`): Change the hardcoded greeting from generic text to include "Priya".
-- **Avatar label** (`src/pages/Chat.tsx`): Change "Bella Vita AI" to "Priya" in the small avatar bar.
-
-The system prompt will instruct the AI to respond naturally when addressed by name ("Priya, show me perfumes") and to occasionally refer to itself as Priya in conversation.
+When a user says something like "meko 3 baje call karo" or "call me in 2 hours", Priya will:
+1. Recognize the callback intent and ask for the phone number
+2. Store the scheduled call in the database with conversation context
+3. A cron job checks every minute for pending calls
+4. At the scheduled time, trigger the ElevenLabs agent to call the user with the same conversation context
 
 ---
 
-## 2. Smart Features to Add
+## Step 1: Create `scheduled_calls` Database Table
 
-### A. Conversation Memory & Personalization
-- Track user preferences within the session (e.g., "You mentioned you like woody fragrances earlier, so here's another one you might love").
-- The system prompt already gets full conversation history — we just need to instruct the AI to reference past preferences proactively.
+New table to store callback requests:
 
-### B. Proactive Suggestions & Upselling
-- After a user adds something to cart, Priya suggests complementary products: *"CEO Man cart mein daal diya! Iske saath CEO Woman bhi try karo, couples ke liye perfect combo hai."*
-- Suggest bundles/combos when budget allows.
+| Column | Type | Purpose |
+|--------|------|---------|
+| id | uuid | Primary key |
+| phone_number | text | User's phone number |
+| scheduled_at | timestamptz | When to make the call |
+| conversation_id | uuid | Link to existing conversation for context |
+| session_id | text | Session identifier |
+| context_summary | text | What the user was discussing (product names, preferences) |
+| status | text | pending / calling / completed / failed |
+| elevenlabs_conversation_id | text | ElevenLabs conversation ID after call is made |
+| created_at | timestamptz | When the request was created |
 
-### C. Quick Voice Commands
-- Add recognition for shortcut phrases in the system prompt:
-  - "Priya, checkout karo" — navigates to checkout
-  - "Priya, cart dikhao" — opens cart
-  - "Priya, ruk jao" / "Priya, stop" — stops speaking
-  - "Priya, wapas jao" / "go back" — show previous results
-  - "Pehla wala add karo" — positional reference ("add the first one")
-
-### D. Mood/Occasion-Based Shopping
-- Priya asks follow-up questions: *"Kis occasion ke liye chahiye? Date night, office, ya casual outing?"*
-- Then filters products accordingly — this logic already exists in intent extraction but isn't prompted conversationally.
-
-### E. Price Negotiation Feel
-- When users say "thoda sasta dikhao" or "budget kam hai", Priya responds empathetically and finds alternatives: *"No worries! Ye dekho, same vibe hai but ₹499 mein mil jayega."*
-
-### F. Confirmation & Feedback Loops
-- After showing products, Priya asks: *"Inme se koi pasand aaya? Ya kuch aur try karein?"*
-- After adding to cart: *"Cart mein daal diya! Aur kuch chahiye ya checkout karein?"*
+RLS: Service role only (edge functions manage this table).
 
 ---
 
-## Technical Changes
+## Step 2: Update System Prompt in `chat/index.ts`
 
-### File: `supabase/functions/chat/index.ts`
+Add callback scheduling instructions to the Priya persona:
 
-**System prompt updates (line ~462-489):**
-- Change persona intro to include the name "Priya"
-- Add instructions for:
-  - Self-introduction on first message
-  - Responding to name-based addressing
-  - Proactive follow-ups after recommendations
-  - Complementary product suggestions after cart additions
-  - Mood/occasion-based questioning
-  - Empathetic budget handling
-  - Confirmation loops after showing products
+- Recognize phrases like: "baad mein call karo", "3 baje call karna", "I'm busy, call me later", "meko call karo"
+- Ask for phone number naturally: "Zaroor! Aapka phone number bata dijiye, main 3 baje call karungi"
+- After getting the number, output a new action block:
 
-### File: `src/pages/Chat.tsx`
+```
+:::action
+type: schedule_call
+phone_number: 9876543210
+scheduled_time: 15:00
+context: User was looking at CEO Man perfume, interested in woody fragrances under 1000
+:::
+```
 
-- **Line ~233 (welcome TTS):** Change greeting to: `"Hello! Main Priya hoon, aapki personal shopping assistant. Aaj main aapko Bella Vita ke best products dikhati hoon."`
-- **Line ~293 (avatar label):** Change `"Bella Vita AI"` to `"Priya"`
-- **Line ~295 (status text):** Change `"Speaking..."` to `"Priya is speaking..."` and `"Here are your results"` to contextual text
-
-### File: `src/components/assistant/TalkingAvatar.tsx`
-
-- Update avatar display name if it shows text (minor cosmetic change)
+- Confirm to user: "Done! Main aapko 3:00 PM pe call karungi. Tab tak Priya aapke liye best deals ready rakhegi!"
 
 ---
 
-## Summary of Smart Features
+## Step 3: Parse `schedule_call` Action in Frontend
 
-| Feature | What Priya Does |
-|---|---|
-| Named identity | Introduces herself as "Priya", responds to her name |
-| Session memory | References earlier preferences in conversation |
-| Proactive upselling | Suggests combos after cart additions |
-| Voice shortcuts | "Priya, checkout karo", "pehla wala dikhao" |
-| Occasion shopping | Asks about occasion before recommending |
-| Budget empathy | Finds alternatives when budget is tight |
-| Confirmation loops | Asks "aur kuch?" after every action |
+Update `parseActions` in `Chat.tsx` to extract `schedule_call` actions with additional fields (phone_number, scheduled_time, context).
+
+Update `handleActions` to call a new edge function `schedule-call` that stores the data in the `scheduled_calls` table.
+
+Show a toast confirmation: "Call scheduled for 3:00 PM"
+
+---
+
+## Step 4: Create `schedule-call` Edge Function
+
+A simple edge function that:
+- Receives phone_number, scheduled_time, conversation_id, session_id, context_summary
+- Converts the time (e.g., "15:00") to a full timestamp in IST (Asia/Kolkata timezone)
+- Inserts a row into `scheduled_calls` with status = "pending"
+- Returns success confirmation
+
+---
+
+## Step 5: Create `trigger-scheduled-calls` Edge Function
+
+This function is called every minute by a cron job. It:
+1. Queries `scheduled_calls` where `scheduled_at <= now()` and `status = 'pending'`
+2. For each pending call:
+   - Loads conversation history from `messages` table using `conversation_id`
+   - Calls the ElevenLabs Conversational AI API to initiate an outbound call
+   - Updates the row status to "calling"
+3. Uses the ElevenLabs Agent API with conversation context override so Priya remembers what was discussed
+
+**ElevenLabs Outbound Call API:**
+```
+POST https://api.elevenlabs.io/v1/convai/twilio/outbound-call
+Headers: xi-api-key: ELEVENLABS_API_KEY
+Body: {
+  agent_id: "YOUR_AGENT_ID",
+  agent_phone_number_id: "YOUR_PHONE_NUMBER_ID",
+  to_number: "+919876543210",
+  conversation_initiation_client_data: {
+    dynamic_variables: {
+      user_name: "customer",
+      context: "User was looking at CEO Man perfume..."
+    }
+  }
+}
+```
+
+---
+
+## Step 6: Set Up pg_cron Job
+
+A cron job runs every minute to invoke the `trigger-scheduled-calls` edge function:
+
+```sql
+SELECT cron.schedule(
+  'trigger-scheduled-calls',
+  '* * * * *',
+  $$ SELECT net.http_post(...) $$
+);
+```
+
+---
+
+## What You Need to Provide
+
+Before I can implement this, I need:
+
+1. **ElevenLabs Agent ID** -- the agent you set up for calling
+2. **ElevenLabs Phone Number ID** -- the phone number registered in your ElevenLabs account for outbound calls (found in ElevenLabs dashboard under Phone Numbers)
+3. **Confirmation** that your ElevenLabs agent has the Twilio/phone calling feature enabled
+
+---
+
+## Files to Create/Modify
+
+| File | Change |
+|------|--------|
+| Database migration | Create `scheduled_calls` table |
+| `supabase/functions/chat/index.ts` | Add callback intent recognition to system prompt |
+| `src/pages/Chat.tsx` | Parse `schedule_call` action, call schedule edge function |
+| `supabase/functions/schedule-call/index.ts` | New -- stores scheduled call in DB |
+| `supabase/functions/trigger-scheduled-calls/index.ts` | New -- cron-triggered, initiates ElevenLabs outbound calls |
+| `supabase/config.toml` | Add new edge function configs |
+| pg_cron SQL | Schedule the minute-by-minute trigger |
 
