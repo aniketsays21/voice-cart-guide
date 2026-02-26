@@ -81,10 +81,10 @@ const TalkingAvatar: React.FC<TalkingAvatarProps> = ({ state, size = "large", cl
             : "text-muted-foreground"
         }`}>
           {state === "speaking"
-            ? "Speaking..."
+            ? "Priya is speaking..."
             : state === "listening"
             ? "Listening..."
-            : "Hi! I'm your Bella Vita assistant"}
+            : "Hi! I'm Priya, your shopping assistant"}
         </p>
       )}
 
