@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
     const truncatedText = text.slice(0, 1000);
     const langCode = target_language_code || "en-IN";
 
-    // --- Fallback chain: Sarvam Key1 -> Sarvam Key2 -> ElevenLabs ---
+    // --- Fallback chain: ElevenLabs -> Sarvam Key1 -> Sarvam Key2 ---
     const sarvamKey1 = Deno.env.get("SARVAM_API_KEY");
     const sarvamKey2 = Deno.env.get("SARVAM_API_KEY_2");
     const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY");
@@ -133,36 +133,36 @@ Deno.serve(async (req) => {
     let audioFormat = "wav";
     let provider = "unknown";
 
-    // Try Sarvam Key 1
-    if (sarvamKey1) {
-      console.log(`TTS: Trying Sarvam key1, lang=${langCode}, textLen=${truncatedText.length}`);
-      result = await trySarvamTTS(sarvamKey1, truncatedText, langCode);
-      if (result.ok) { provider = "sarvam-key1"; }
-      else if (result.status === 429 || result.status === 403) {
-        console.log(`TTS: Sarvam key1 failed (${result.status}), trying key2...`);
-        result = null;
-      } else {
-        // Other error from Sarvam, still try fallbacks
-        console.log(`TTS: Sarvam key1 failed (${result.status}), trying key2...`);
-        result = null;
-      }
-    }
-
-    // Try Sarvam Key 2
-    if (!result && sarvamKey2) {
-      result = await trySarvamTTS(sarvamKey2, truncatedText, langCode);
-      if (result.ok) { provider = "sarvam-key2"; }
-      else {
-        console.log(`TTS: Sarvam key2 failed (${result.status}), falling back to ElevenLabs...`);
-        result = null;
-      }
-    }
-
-    // Try ElevenLabs
-    if (!result && elevenLabsKey) {
+    // Try ElevenLabs first (faster, more reliable)
+    if (elevenLabsKey) {
+      console.log(`TTS: Trying ElevenLabs first, textLen=${truncatedText.length}`);
       result = await tryElevenLabsTTS(elevenLabsKey, truncatedText);
       if (result.ok) { provider = "elevenlabs"; audioFormat = "mp3"; }
-      else { result = null; }
+      else {
+        console.log(`TTS: ElevenLabs failed (${result.status}), falling back to Sarvam...`);
+        result = null;
+      }
+    }
+
+    // Try Sarvam Key 1 as fallback
+    if (!result && sarvamKey1) {
+      console.log(`TTS: Trying Sarvam key1, lang=${langCode}, textLen=${truncatedText.length}`);
+      result = await trySarvamTTS(sarvamKey1, truncatedText, langCode);
+      if (result.ok) { provider = "sarvam-key1"; audioFormat = "wav"; }
+      else {
+        console.log(`TTS: Sarvam key1 failed (${result.status}), trying key2...`);
+        result = null;
+      }
+    }
+
+    // Try Sarvam Key 2 as last resort
+    if (!result && sarvamKey2) {
+      result = await trySarvamTTS(sarvamKey2, truncatedText, langCode);
+      if (result.ok) { provider = "sarvam-key2"; audioFormat = "wav"; }
+      else {
+        console.log(`TTS: Sarvam key2 also failed (${result.status})`);
+        result = null;
+      }
     }
 
     if (!result || !result.ok) {
