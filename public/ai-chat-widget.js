@@ -241,6 +241,74 @@
 
   function shopifyGoToCart() { window.location.href = "/cart"; }
 
+  // ── Form filling helpers (checkout, cart, contact) ──────────────
+  function fillFormField(selectors, value) {
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (el && el.offsetParent !== null) {
+        el.focus();
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function fillCheckoutField(fieldName, value) {
+    var fieldMap = {
+      email: ['#email', '#checkout_email', 'input[name="checkout[email]"]', 'input[type="email"]'],
+      first_name: ['#checkout_shipping_address_first_name', 'input[name="checkout[shipping_address][first_name]"]', 'input[name="first_name"]'],
+      last_name: ['#checkout_shipping_address_last_name', 'input[name="checkout[shipping_address][last_name]"]', 'input[name="last_name"]'],
+      address1: ['#checkout_shipping_address_address1', 'input[name="checkout[shipping_address][address1]"]', 'input[name="address1"]'],
+      address2: ['#checkout_shipping_address_address2', 'input[name="checkout[shipping_address][address2]"]', 'input[name="address2"]'],
+      city: ['#checkout_shipping_address_city', 'input[name="checkout[shipping_address][city]"]', 'input[name="city"]'],
+      zip: ['#checkout_shipping_address_zip', 'input[name="checkout[shipping_address][zip]"]', 'input[name="zip"]', 'input[name="pincode"]'],
+      phone: ['#checkout_shipping_address_phone', 'input[name="checkout[shipping_address][phone]"]', 'input[name="phone"]', 'input[type="tel"]'],
+      note: ['textarea[name="note"]', '#CartSpecialInstructions', '.cart-note textarea', '#cart-note']
+    };
+    var selectors = fieldMap[fieldName];
+    if (!selectors) return false;
+    return fillFormField(selectors, value);
+  }
+
+  function updateCartQuantity(lineIndex, quantity) {
+    return fetch("/cart/change.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ line: lineIndex, quantity: quantity })
+    }).then(function (r) {
+      if (!r.ok) return false;
+      document.dispatchEvent(new CustomEvent("cart:refresh"));
+      window.location.reload();
+      return true;
+    }).catch(function () { return false; });
+  }
+
+  function removeFromCart(lineIndex) {
+    return updateCartQuantity(lineIndex, 0);
+  }
+
+  function applyDiscountCode(code) {
+    // Try native discount field
+    var discountSelectors = ['#discount-code', '#checkout_reduction_code', 'input[name="discount"]', 'input[name="reduction_code"]', '.field__input[placeholder*="Discount"]'];
+    if (fillFormField(discountSelectors, code)) {
+      // Try clicking apply button
+      setTimeout(function () {
+        var applyBtns = ['button[name="checkout[submit]"]', '.field__input-btn', 'button[aria-label*="Apply"]', '.discount-apply-btn'];
+        for (var i = 0; i < applyBtns.length; i++) {
+          var btn = document.querySelector(applyBtns[i]);
+          if (btn && btn.offsetParent !== null) { btn.click(); return; }
+        }
+      }, 300);
+      return true;
+    }
+    // Fallback: navigate to checkout with discount
+    window.location.href = "/discount/" + encodeURIComponent(code);
+    return true;
+  }
+
   function addToCartByProduct(productName, productLink) {
     var handle = null;
     if (productLink) handle = extractHandle(productLink);
@@ -267,10 +335,19 @@
 
   function fetchShopifyCatalog() {
     if (!isShopify()) return Promise.resolve([]);
-    return fetch("/products.json?limit=250")
-      .then(function (r) { return r.ok ? r.json() : { products: [] }; })
-      .then(function (d) { return d.products || []; })
-      .catch(function () { return []; });
+    var allProducts = [];
+    function fetchPage(page) {
+      return fetch("/products.json?limit=250&page=" + page)
+        .then(function (r) { return r.ok ? r.json() : { products: [] }; })
+        .then(function (d) {
+          var products = d.products || [];
+          allProducts = allProducts.concat(products);
+          if (products.length === 250 && page < 10) return fetchPage(page + 1);
+          return allProducts;
+        })
+        .catch(function () { return allProducts; });
+    }
+    return fetchPage(1);
   }
 
   // ── Session helpers ────────────────────────────────────────────────
@@ -350,14 +427,22 @@
     // Price indicators
     var pricePattern = /(₹|rs\.?|rupees?|mrp|price)\s*\d/i;
     if (pricePattern.test(text)) return true;
-    // Multiple product-like mentions (capitalized multi-word names near prices)
+    // Product-like mentions (capitalized multi-word names)
     var productMentions = (text.match(/[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+/g) || []).length;
-    if (productMentions >= 2) return true;
-    // Keywords indicating product talk
-    var keywords = ["perfume", "fragrance", "body wash", "shower gel", "gift set", "combo", "deo", "attar", "skincare", "moisturizer"];
+    if (productMentions >= 1) return true;
+    // Keywords indicating product talk — only 1 needed now
+    var keywords = ["perfume", "fragrance", "body wash", "shower gel", "gift set", "combo", "deo", "attar", "skincare", "moisturizer", "collection", "range", "recommend", "option", "product", "cologne", "scent", "spray", "lotion", "serum", "cream", "shampoo", "soap"];
     var keywordCount = keywords.filter(function (k) { return lower.includes(k); }).length;
-    if (keywordCount >= 2) return true;
+    if (keywordCount >= 1) return true;
     return false;
+  }
+
+  // Check if user query has product-intent words
+  function hasProductIntent(query) {
+    if (!query) return false;
+    var lower = query.toLowerCase();
+    var intentWords = ["perfume", "fragrance", "gift", "party", "wear", "skincare", "body", "wash", "deo", "attar", "cologne", "scent", "cream", "lotion", "spray", "shampoo", "soap", "combo", "set", "moisturizer", "shaadi", "wedding", "birthday", "office", "date", "night", "summer", "winter", "beach", "gym", "travel", "cheap", "expensive", "best", "top", "new", "dikhao", "dikha", "suggest", "recommend", "show", "batao"];
+    return intentWords.some(function (w) { return lower.includes(w); });
   }
 
   function simplifyQuery(query) {
@@ -811,6 +896,29 @@
           if (isShopifyPlatform) pendingNavigation = "__checkout__";
         } else if (action.type === "navigate_to_cart") {
           if (isShopifyPlatform) pendingNavigation = "/cart";
+        } else if (action.type === "fill_field") {
+          if (isShopifyPlatform && action.field_name && action.value) {
+            var filled = fillCheckoutField(action.field_name, action.value);
+            if (filled) showToast("Filled " + action.field_name, false);
+            else showToast("Could not find " + action.field_name + " field", true);
+          }
+        } else if (action.type === "apply_discount") {
+          if (isShopifyPlatform && action.code) {
+            applyDiscountCode(action.code);
+            showToast("Applying discount: " + action.code, false);
+          }
+        } else if (action.type === "update_quantity") {
+          if (isShopifyPlatform && action.line && action.quantity !== undefined) {
+            updateCartQuantity(parseInt(action.line), parseInt(action.quantity)).then(function (ok) {
+              showToast(ok ? "Cart updated!" : "Failed to update cart", !ok);
+            });
+          }
+        } else if (action.type === "remove_from_cart") {
+          if (isShopifyPlatform && action.line) {
+            removeFromCart(parseInt(action.line)).then(function (ok) {
+              showToast(ok ? "Item removed!" : "Failed to remove item", !ok);
+            });
+          }
         } else if (action.type === "schedule_call") {
           if (action.phone_number && action.scheduled_time) {
             console.log("[CALLBACK] Scheduling call:", action.phone_number, action.scheduled_time);
@@ -853,11 +961,14 @@
       var hasNavAction = actions.some(function (a) {
         return a.type === "navigate_to_search" || a.type === "navigate_to_collection" || a.type === "open_product";
       });
-      if (isShopifyPlatform && !hasNavAction && !pendingNavigation && looksLikeProductRecommendation(fullResponse) && query) {
-        var sq = simplifyQuery(query);
-        if (sq) {
-          console.log("[AI Widget] Fallback auto-search for:", sq);
-          pendingNavigation = "/search?q=" + encodeURIComponent(sq);
+      if (isShopifyPlatform && !hasNavAction && !pendingNavigation && query) {
+        // Trigger auto-search if AI response looks like product recommendation OR user query has product intent
+        if (looksLikeProductRecommendation(fullResponse) || hasProductIntent(query)) {
+          var sq = simplifyQuery(query);
+          if (sq) {
+            console.log("[AI Widget] Fallback auto-search for:", sq);
+            pendingNavigation = "/search?q=" + encodeURIComponent(sq);
+          }
         }
       }
 
