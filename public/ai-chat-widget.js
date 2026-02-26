@@ -355,6 +355,17 @@
     var platform = config.platform;
 
     var isShopifyPlatform = platform === "shopify" || (platform === undefined && isShopify());
+
+    // Auto-checkout: if we navigated to /cart with the flag, click checkout button after page loads
+    if (isShopifyPlatform && sessionStorage.getItem("bellaai_auto_checkout") === "1" && window.location.pathname === "/cart") {
+      sessionStorage.removeItem("bellaai_auto_checkout");
+      setTimeout(function () {
+        if (!clickNativeCheckout()) {
+          window.location.href = "/checkout";
+        }
+      }, 1500); // Wait for cart page to fully render
+    }
+
     var chatUrl = apiUrl + "/functions/v1/chat";
     var sttUrl = apiUrl + "/functions/v1/sarvam-stt";
     var ttsUrl = apiUrl + "/functions/v1/sarvam-tts";
@@ -873,7 +884,17 @@
       var nav = pendingNavigation;
       pendingNavigation = null;
       if (nav === "__checkout__") {
-        shopifyGoToCheckout();
+        // If already on /cart, click the native checkout button directly
+        if (window.location.pathname === "/cart") {
+          if (!clickNativeCheckout()) {
+            // Fallback if native button not found
+            window.location.href = "/checkout";
+          }
+        } else {
+          // Navigate to /cart first, then auto-click checkout after page loads
+          sessionStorage.setItem("bellaai_auto_checkout", "1");
+          window.location.href = "/cart";
+        }
       } else {
         window.location.href = nav;
       }
@@ -893,7 +914,7 @@
       persistState();
       render();
 
-      var welcomeQuery = "Hello, Welcome to Bella AI! I am your AI assistant to guide you through the process. Here are the bestselling products, what would you like to view? Namaste, Bella AI mein aapka swagat hai! Main aapki AI assistant hoon, aapko guide karne ke liye. Ye rahe bestselling products, aap kya dekhna chahenge?";
+      var welcomeQuery = "Hi, introduce yourself briefly as Bella AI";
       voiceMessages.push({ role: "user", content: welcomeQuery });
       sendToChat(welcomeQuery);
     }

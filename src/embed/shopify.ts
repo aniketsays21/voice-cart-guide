@@ -110,9 +110,40 @@ export function shopifyNavigate(url: string): void {
   }
 }
 
-/** Redirect to Shopify checkout */
+/** Redirect to Shopify checkout — navigates to cart first, then clicks native checkout */
 export function shopifyGoToCheckout(): void {
+  if (window.location.pathname === "/cart") {
+    // Already on cart, try clicking native checkout button
+    clickNativeCheckout();
+  } else {
+    // Navigate to cart with auto-checkout flag
+    sessionStorage.setItem("bellaai_auto_checkout", "1");
+    window.location.href = "/cart";
+  }
+}
+
+/** Try to click native checkout button on cart page */
+function clickNativeCheckout(): boolean {
+  const selectors = [
+    '[name="checkout"]',
+    '.cart__checkout-button',
+    'button[type="submit"][value*="Check"]',
+    'a[href="/checkout"]',
+    '.cart__checkout',
+    '#checkout',
+    'input[name="checkout"]',
+    'button.cart__checkout'
+  ];
+  for (const sel of selectors) {
+    const btn = document.querySelector(sel) as HTMLElement;
+    if (btn && btn.offsetParent !== null) {
+      btn.click();
+      return true;
+    }
+  }
+  // Fallback to direct navigation
   window.location.href = "/checkout";
+  return false;
 }
 
 /** Redirect to Shopify cart page */
