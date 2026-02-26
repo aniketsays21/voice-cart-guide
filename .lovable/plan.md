@@ -1,50 +1,47 @@
 
+# Fix Response Latency + Callback Scheduling
 
-# Simultaneous Actions + Fix Callback Prompt Behavior
+## Problem 1: Slow Response Time
 
-## Two Changes Needed
+Three bottlenecks are adding unnecessary delay:
 
-### 1. Execute Shopify Actions While Priya Speaks
+### A. Sarvam API Failing — Wasted Fallback Calls (~2-4s wasted)
+- **STT**: Sarvam returns 404 on every call, then falls back to ElevenLabs. Two wasted API calls per transcription.
+- **TTS**: Sarvam returns 400 because the speaker name "arvind" is invalid. Valid names include "priya", "anushka", etc. Then falls back to ElevenLabs. Two more wasted API calls.
 
-Currently in `src/pages/Chat.tsx` (lines 299-303), actions and TTS already run in parallel — `handleActions` fires, then `playTTS` starts without awaiting actions. However, the Shopify **embed widget** (`src/embed/widget.ts`) only executes actions AFTER the full message renders, not during streaming.
+**Fix**: Change TTS speaker from "arvind" to "priya" in `supabase/functions/sarvam-tts/index.ts` (line 45). This alone should fix TTS and save ~2-3 seconds. For STT, Sarvam's API endpoint may have changed — switch STT to try ElevenLabs first since it's currently the only one working.
 
-**Fix**: In the embed widget, execute actions immediately as they're parsed during streaming rather than batching them for after render. This means when Priya says "Cart mein daal diya!", the add-to-cart action fires on the Shopify store simultaneously.
+### B. VAD Silence Detection Too Long (2.5s wait)
+Currently waits 2500ms of silence before stopping recording. This can be reduced to 1500ms for faster response.
 
-**Changes in `src/embed/widget.ts`**:
-- Move action execution to happen immediately when parsed during streaming, not just after full render
-- Make `executePendingActions()` run as soon as each action block is detected in the streamed response, rather than waiting for the complete message
+**Fix**: Change VAD timeout from 2500 to 1500 in `src/pages/Chat.tsx` (line 330).
 
-**Changes in `src/pages/Chat.tsx`**:
-- Ensure `handleActions` runs before (or in parallel with) `playTTS` — this is already the case at lines 299-303, so no change needed here. The current flow is correct: actions fire, then TTS starts playing simultaneously.
+### C. TTS Waits for Full AI Response
+Currently the entire AI response streams completely before TTS starts. We can start TTS on the commentary text as soon as streaming finishes (this is already the flow, but fixing Sarvam will make it much faster).
 
-### 2. Fix Callback Scheduling — Only Trigger When User Says "I'm Busy"
+## Problem 2: Callback Never Fires
 
-The current system prompt (line 512-514) says:
-> "When user says things like 'meko baad mein call karo'... First ask for their phone number"
+The `scheduled_calls` table is empty — the `schedule-call` edge function was never called. The cron job is running correctly every minute, but there's nothing to trigger.
 
-This is too eager — Priya is bringing up the callback option proactively at conversation start.
+Root cause: Either Priya didn't generate the `:::action type: schedule_call:::` block, or the frontend parsing missed it. Two fixes needed:
 
-**Fix in `supabase/functions/chat/index.ts`** (lines 512-529):
-- Rewrite the CALLBACK SCHEDULING section to make it strictly reactive
-- Priya should NEVER proactively suggest callbacks or ask for phone numbers
-- Only activate callback flow when the user explicitly says things like:
-  - "Abhi free nahi hu"
-  - "Baad mein call karo"
-  - "I don't have time right now"
-  - "Meko 3 baje call karna"
-- Remove any language that could make Priya volunteer the callback option
-- Add explicit instruction: "NEVER suggest calling the user or ask for their phone number unless the user explicitly requests a callback or says they are busy/not free"
+### A. Frontend Parsing Issue
+The `parseActions` function in `Chat.tsx` uses `getVal("type")` which looks for `type:` in the action block. But the action block from the AI might have spacing issues. Also, the `handleActions` function only triggers schedule-call if BOTH `phoneNumber` AND `scheduledTime` are present in a single action block — but the AI asks for the phone number in a separate message, so they may never appear together.
 
----
+**Fix**: Update the prompt to instruct Priya to output the schedule_call action block ONLY in the message where she confirms both the time AND phone number, ensuring both values are in the same block.
 
-## Technical Details
+### B. Make Schedule-Call More Robust
+Add logging to the schedule-call invocation in `handleActions` so we can see if/when it fires. Also add a toast when the action is detected.
 
-### File: `src/embed/widget.ts`
-- In the streaming/render loop, call `executePendingActions()` immediately after each streamed message chunk that contains a complete `:::action...:::` block
-- This ensures Shopify cart additions, product page navigations, and checkout redirects happen while Priya's text response is still being displayed/spoken
+## Files to Change
 
-### File: `supabase/functions/chat/index.ts` (lines 512-529)
-- Replace the CALLBACK SCHEDULING prompt section with stricter wording:
-  - "CALLBACK SCHEDULING: This feature is ONLY activated when the user explicitly says they are busy, not free, or asks you to call them later. Examples: 'abhi free nahi hu', 'baad mein call karo', 'meko 3 baje call karna', 'I dont have time now'. NEVER proactively suggest calling the user. NEVER ask for their phone number unless they have first requested a callback."
-  - Keep the rest of the callback logic (phone number collection, action block output, confirmation) the same
+| File | Change |
+|------|--------|
+| `supabase/functions/sarvam-tts/index.ts` | Change speaker from "arvind" to "priya" (line 45) |
+| `supabase/functions/sarvam-stt/index.ts` | Reorder fallback: try ElevenLabs first since Sarvam STT is returning 404 |
+| `src/pages/Chat.tsx` | Reduce VAD timeout from 2500 to 1500 (line 330) |
+| `supabase/functions/chat/index.ts` | Strengthen the schedule_call prompt to ensure both phone + time appear in the same action block |
 
+## Expected Impact
+- **Latency**: ~3-5 seconds faster response (fixing Sarvam TTS saves ~2-3s, reducing VAD saves ~1s)
+- **Callback**: Will actually store scheduled calls and trigger them via the existing cron job
