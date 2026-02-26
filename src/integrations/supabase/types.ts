@@ -237,6 +237,50 @@ export type Database = {
         }
         Relationships: []
       }
+      scheduled_calls: {
+        Row: {
+          context_summary: string | null
+          conversation_id: string | null
+          created_at: string
+          elevenlabs_conversation_id: string | null
+          id: string
+          phone_number: string
+          scheduled_at: string
+          session_id: string
+          status: string
+        }
+        Insert: {
+          context_summary?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          elevenlabs_conversation_id?: string | null
+          id?: string
+          phone_number: string
+          scheduled_at: string
+          session_id: string
+          status?: string
+        }
+        Update: {
+          context_summary?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          elevenlabs_conversation_id?: string | null
+          id?: string
+          phone_number?: string
+          scheduled_at?: string
+          session_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scheduled_calls_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

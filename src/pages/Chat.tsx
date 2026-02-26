@@ -65,8 +65,16 @@ function parseProducts(text: string): { products: AssistantProduct[]; commentary
   return { products, commentary };
 }
 
-function parseActions(text: string): Array<{ action: string; productName: string }> {
-  const actions: Array<{ action: string; productName: string }> = [];
+interface ParsedAction {
+  action: string;
+  productName?: string;
+  phoneNumber?: string;
+  scheduledTime?: string;
+  context?: string;
+}
+
+function parseActions(text: string): ParsedAction[] {
+  const actions: ParsedAction[] = [];
   const actionRegex = /:::action\s*\n([\s\S]*?):::/g;
   let match;
   while ((match = actionRegex.exec(text)) !== null) {
@@ -76,8 +84,17 @@ function parseActions(text: string): Array<{ action: string; productName: string
       return m ? m[1].trim() : undefined;
     };
     const action = getVal("type");
-    const productName = getVal("product_name");
-    if (action && productName) actions.push({ action, productName });
+    if (action === "schedule_call") {
+      actions.push({
+        action,
+        phoneNumber: getVal("phone_number"),
+        scheduledTime: getVal("scheduled_time"),
+        context: getVal("context"),
+      });
+    } else {
+      const productName = getVal("product_name");
+      if (action && productName) actions.push({ action, productName });
+    }
   }
   return actions;
 }
@@ -165,23 +182,47 @@ const Chat: React.FC = () => {
   }, [voiceEnabled]);
 
   // Handle AI actions
-  const handleActions = useCallback((actions: Array<{ action: string; productName: string }>, products: AssistantProduct[]) => {
+  const handleActions = useCallback((actions: ParsedAction[], products: AssistantProduct[]) => {
     for (const act of actions) {
-      if (act.action === "open_product") {
-        const product = products.find(p => p.name.toLowerCase().includes(act.productName.toLowerCase()));
+      if (act.action === "schedule_call") {
+        // Schedule a callback via the edge function
+        if (act.phoneNumber && act.scheduledTime) {
+          fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schedule-call`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+            body: JSON.stringify({
+              phone_number: act.phoneNumber,
+              scheduled_time: act.scheduledTime,
+              conversation_id: conversationId,
+              session_id: sessionId,
+              context_summary: act.context || "",
+            }),
+          })
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.success) {
+                toast.success(`Call scheduled for ${act.scheduledTime}!`, { duration: 4000 });
+              } else {
+                toast.error("Failed to schedule call. Please try again.");
+              }
+            })
+            .catch(() => toast.error("Failed to schedule call."));
+        }
+      } else if (act.action === "open_product") {
+        const product = products.find(p => p.name.toLowerCase().includes((act.productName || "").toLowerCase()));
         if (product) {
           setTimeout(() => setSelectedProduct(product), 500);
         }
       } else if (act.action === "add_to_cart") {
         let targetProduct: AssistantProduct | undefined;
         for (const group of resultGroups) {
-          targetProduct = group.products.find(p => p.name.toLowerCase().includes(act.productName.toLowerCase()));
+          targetProduct = group.products.find(p => p.name.toLowerCase().includes((act.productName || "").toLowerCase()));
           if (targetProduct) break;
         }
         if (!targetProduct) {
-          targetProduct = products.find(p => p.name.toLowerCase().includes(act.productName.toLowerCase()));
+          targetProduct = products.find(p => p.name.toLowerCase().includes((act.productName || "").toLowerCase()));
         }
-        if (!targetProduct && selectedProduct && selectedProduct.name.toLowerCase().includes(act.productName.toLowerCase())) {
+        if (!targetProduct && selectedProduct && selectedProduct.name.toLowerCase().includes((act.productName || "").toLowerCase())) {
           targetProduct = selectedProduct;
         }
         if (targetProduct) {
@@ -194,7 +235,7 @@ const Chat: React.FC = () => {
         }
       }
     }
-  }, [resultGroups, selectedProduct, addToCart, isInCart]);
+  }, [resultGroups, selectedProduct, addToCart, isInCart, conversationId, sessionId]);
 
   // Send query to AI
   const send = useCallback(async (text: string) => {
