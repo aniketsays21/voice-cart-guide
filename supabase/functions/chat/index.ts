@@ -785,25 +785,38 @@ serve(async (req) => {
       });
     }
 
-    const response = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
-          messages: [
-            { role: "system", content: systemPrompt },
-            productDataMessage,
-            ...trimmedMessages,
-          ],
-          stream: true,
-        }),
+    const aiRequestBody = JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        { role: "system", content: systemPrompt },
+        productDataMessage,
+        ...trimmedMessages,
+      ],
+      stream: true,
+    });
+
+    async function fetchAI(attempt: number): Promise<Response> {
+      const resp = await fetch(
+        "https://ai.gateway.lovable.dev/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: aiRequestBody,
+        }
+      );
+      // Retry once on 503
+      if (resp.status === 503 && attempt < 1) {
+        console.warn("AI gateway 503, retrying in 1s...");
+        await new Promise(r => setTimeout(r, 1000));
+        return fetchAI(attempt + 1);
       }
-    );
+      return resp;
+    }
+
+    const response = await fetchAI(0);
 
     if (!response.ok) {
       if (response.status === 429) {

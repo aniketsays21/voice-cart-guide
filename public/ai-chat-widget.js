@@ -662,64 +662,82 @@
         pageContext: pageContext
       };
 
-      fetch(chatUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-        body: JSON.stringify(requestBody)
-      }).then(function (resp) {
-        var convIdHeader = resp.headers.get("X-Conversation-Id");
-        if (convIdHeader && !conversationId) { conversationId = convIdHeader; persistState(); }
+      function doFetch(retryCount) {
+        fetch(chatUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+          body: JSON.stringify(requestBody)
+        }).then(function (resp) {
+          var convIdHeader = resp.headers.get("X-Conversation-Id");
+          if (convIdHeader && !conversationId) { conversationId = convIdHeader; persistState(); }
 
-        if (!resp.ok) {
-          return resp.json().catch(function () { return {}; }).then(function (err) {
-            setVoiceState("idle", err.error || "Something went wrong");
-            isWelcomeLoading = false;
-            render();
-          });
-        }
-
-        var fullResponse = "";
-        var streamReader = resp.body.getReader();
-        var decoder = new TextDecoder();
-        var textBuffer = "";
-
-        function pump() {
-          return streamReader.read().then(function (result) {
-            if (result.done) {
-              onChatComplete(fullResponse, query);
+          if (!resp.ok) {
+            // Retry once on 500/503 errors
+            if ((resp.status === 500 || resp.status === 503) && retryCount < 1) {
+              console.warn("[AI Widget] Got " + resp.status + ", retrying in 2s...");
+              setTimeout(function () { doFetch(retryCount + 1); }, 2000);
               return;
             }
-            textBuffer += decoder.decode(result.value, { stream: true });
-            var newlineIndex;
-            while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-              var line = textBuffer.slice(0, newlineIndex);
-              textBuffer = textBuffer.slice(newlineIndex + 1);
-              if (line.endsWith("\r")) line = line.slice(0, -1);
-              if (!line.startsWith("data: ")) continue;
-              var jsonStr = line.slice(6).trim();
-              if (jsonStr === "[DONE]") continue;
-              try {
-                var parsed = JSON.parse(jsonStr);
-                var content = parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content;
-                if (content) fullResponse += content;
-              } catch (e) {
-                textBuffer = line + "\n" + textBuffer;
-                break;
+            return resp.json().catch(function () { return {}; }).then(function (err) {
+              setVoiceState("idle", err.error || "Something went wrong");
+              isWelcomeLoading = false;
+              render();
+              setTimeout(function () {
+                if (isOpen && voiceState === "idle") startListening();
+              }, 3000);
+            });
+          }
+
+          var fullResponse = "";
+          var streamReader = resp.body.getReader();
+          var decoder = new TextDecoder();
+          var textBuffer = "";
+
+          function pump() {
+            return streamReader.read().then(function (result) {
+              if (result.done) {
+                onChatComplete(fullResponse, query);
+                return;
               }
-            }
-            return pump();
-          });
-        }
-        return pump();
-      }).catch(function (err) {
-        console.error("[AI Widget] Chat fetch error:", err);
-        setVoiceState("idle", "Connection error");
-        isWelcomeLoading = false;
-        render();
-        setTimeout(function () {
-          if (isOpen && voiceState === "idle") startListening();
-        }, 3000);
-      });
+              textBuffer += decoder.decode(result.value, { stream: true });
+              var newlineIndex;
+              while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+                var line = textBuffer.slice(0, newlineIndex);
+                textBuffer = textBuffer.slice(newlineIndex + 1);
+                if (line.endsWith("\r")) line = line.slice(0, -1);
+                if (!line.startsWith("data: ")) continue;
+                var jsonStr = line.slice(6).trim();
+                if (jsonStr === "[DONE]") continue;
+                try {
+                  var parsed = JSON.parse(jsonStr);
+                  var content = parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content;
+                  if (content) fullResponse += content;
+                } catch (e) {
+                  textBuffer = line + "\n" + textBuffer;
+                  break;
+                }
+              }
+              return pump();
+            });
+          }
+          return pump();
+        }).catch(function (err) {
+          // Retry once on network errors
+          if (retryCount < 1) {
+            console.warn("[AI Widget] Fetch error, retrying in 2s...", err);
+            setTimeout(function () { doFetch(retryCount + 1); }, 2000);
+            return;
+          }
+          console.error("[AI Widget] Chat fetch error:", err);
+          setVoiceState("idle", "Connection error");
+          isWelcomeLoading = false;
+          render();
+          setTimeout(function () {
+            if (isOpen && voiceState === "idle") startListening();
+          }, 3000);
+        });
+      }
+      doFetch(0);
     }
 
     function onChatComplete(fullResponse, query) {
