@@ -1,58 +1,133 @@
 
+## Callback flow explained in simple English
 
-# Fix Callback Scheduling — Root Cause Found
+When Priya takes your number and time, this is the intended flow:
 
-## The Problem
+1. Priya’s response includes an internal action block:
+   - `type: schedule_call`
+   - `phone_number: ...`
+   - `scheduled_time: ...`
+2. The frontend must detect that action and call backend function `schedule-call`.
+3. `schedule-call` stores the request in `scheduled_calls` table with:
+   - phone number
+   - scheduled timestamp (IST-based)
+   - status = `pending`
+   - conversation/session context
+4. Every minute, an automated cron job calls `trigger-scheduled-calls`.
+5. `trigger-scheduled-calls` picks pending rows whose `scheduled_at <= now`.
+6. It sends an outbound call request to ElevenLabs (`/v1/convai/twilio/outbound-call`) and marks status (`calling`/`failed`).
 
-The AI **is** generating the `schedule_call` action blocks correctly (confirmed in the messages table — multiple entries with phone number 9729222530 and various times). The frontend parsing code also looks correct. **But the `scheduled_calls` table is completely empty.**
+---
 
-## Root Cause: JWT Verification Blocking the Edge Function
+## What I checked in your live project (actual diagnosis)
 
-The `supabase/config.toml` file only has 3 functions listed with `verify_jwt = false`:
-- `chat`
-- `sarvam-stt`
-- `sarvam-tts`
+I validated the pipeline and found:
 
-The `schedule-call` and `trigger-scheduled-calls` functions are **NOT listed**. This means they default to requiring a valid JWT token. The frontend sends the anon key as a Bearer token, which fails JWT verification, so every call to the `schedule-call` function is silently rejected with a 401 error.
+- Priya **is generating** `schedule_call` action blocks in conversation messages.
+- `scheduled_calls` table is currently **empty**.
+- No runtime logs for `schedule-call` function (means it is not being invoked).
+- Cron is healthy:
+  - cron job exists
+  - runs every minute
+  - `trigger-scheduled-calls` is being called successfully (HTTP 200 repeatedly).
+- `trigger-scheduled-calls` cannot do anything because there are no rows to process.
 
-## The Fix
+### Root cause now
+Your Shopify voice widget flow is not invoking callback scheduling:
+- In `public/ai-chat-widget.js`, action handling supports:
+  - `open_product`, `navigate_to_search`, `navigate_to_collection`, `add_to_cart`, `navigate_to_checkout`, `navigate_to_cart`
+- It does **not** handle `schedule_call`.
+- Same limitation exists in `src/embed/widget.ts` action type handling.
 
-### File: `supabase/config.toml`
-Add both missing functions with `verify_jwt = false`:
+So Priya asks for number/time and even emits action text, but frontend never sends it to `schedule-call`, so no callback is stored.
 
-```toml
-[functions.schedule-call]
-verify_jwt = false
+---
 
-[functions.trigger-scheduled-calls]
-verify_jwt = false
-```
+## Is Sarvam AI causing callback failure?
 
-### File: `src/pages/Chat.tsx` (minor improvement)
-Add error logging to the `.catch()` block in `handleActions` so failures are visible in the console, not just a toast:
+Short answer: **No (not for callback scheduling).**
 
-```javascript
-.catch((err) => {
-  console.error("[CALLBACK] Failed to invoke schedule-call:", err);
-  toast.error("Failed to schedule call.");
-});
-```
+- Callback storage + calling path uses:
+  - backend `schedule-call`
+  - backend `trigger-scheduled-calls`
+  - ElevenLabs outbound calling API
+- Sarvam is only in voice STT/TTS conversation path.
+- Even if Sarvam had issues, callback would still work **if** `schedule-call` is invoked correctly.
 
-Also add a `.then()` check for non-OK responses before parsing JSON, since a 401 response would cause a JSON parse error.
+Current voice provider state from code:
+- STT is already ElevenLabs-first (Sarvam fallback).
+- TTS is Sarvam-first, then ElevenLabs fallback.
 
-## Why the Call Never Happened
+If you want, I can plan a clean switch to ElevenLabs-first for TTS too, but that is optimization — not the callback blocker.
 
-The chain is:
-1. User says "call me at 11:45" with phone number -- WORKING
-2. AI generates `:::action type: schedule_call:::` block -- WORKING (confirmed in DB)
-3. Frontend parses the action block -- WORKING (code is correct)
-4. Frontend calls `schedule-call` edge function -- **FAILING (401 JWT error)**
-5. Nothing is inserted into `scheduled_calls` table -- empty
-6. `trigger-scheduled-calls` cron job finds nothing to trigger -- no calls made
+---
 
-## Expected Result After Fix
-- The `schedule-call` edge function will accept the request
-- A row will be inserted into the `scheduled_calls` table
-- The `trigger-scheduled-calls` cron job (already running every minute) will pick it up at the scheduled time
-- ElevenLabs outbound call will be triggered to the user's phone number
+## Exact user instructions: how to give number/time so callback works reliably
 
+Use this pattern in one clear sentence (or two consecutive messages):
+
+- “Priya, main busy hoon. Mujhe 5:30 PM pe call karna. Mera number 98XXXXXXXX.”
+
+Best practices:
+1. Give a **10-digit Indian mobile number**.
+2. Give time in one of these formats:
+   - `15:30`
+   - `3:30 PM`
+   - `11:45`
+3. Prefer **time only** (current scheduler expects time, not full date parsing).
+4. If you say a past time, system schedules for next day.
+5. Time is interpreted in **IST**.
+
+Avoid for now:
+- “tomorrow 5:30”, “26 Feb 5:30 PM” (date text may not parse cleanly unless explicitly supported).
+
+---
+
+## Why you didn’t receive callback (summary)
+
+Your backend scheduler is running, but callback requests are never inserted because the active widget/frontend flow does not execute the `schedule_call` action.
+
+---
+
+## Implementation plan to fix it properly
+
+### Scope
+Add callback action execution to the widget flow (where users are actually interacting), and add robust validation/logging.
+
+### Changes
+1. Extend widget action types to include:
+   - `schedule_call`
+   - `phone_number`, `scheduled_time`, `context`
+2. In widget action handler (`public/ai-chat-widget.js` and source `src/embed/widget.ts`):
+   - detect `schedule_call`
+   - call backend `schedule-call` with:
+     - phone_number
+     - scheduled_time
+     - conversation_id
+     - session_id
+     - context_summary
+3. Add user feedback toasts:
+   - “Scheduling callback...”
+   - success/failure details
+4. Add console logs for troubleshooting (request start, response status, response body).
+5. Keep current cron + trigger logic unchanged (already healthy).
+
+### Verification checklist (end-to-end)
+1. Trigger callback request from widget using number + time.
+2. Confirm success toast appears.
+3. Confirm new row appears in `scheduled_calls` with `status = pending`.
+4. Wait until scheduled time.
+5. Confirm row changes to `calling` or `failed`.
+6. Confirm phone receives call.
+7. If failed, inspect trigger function logs for ElevenLabs response body and fix format/agent settings.
+
+---
+
+## Optional follow-up (if you want full ElevenLabs switch)
+
+I can also prepare a second change set:
+- make TTS ElevenLabs-first (Sarvam fallback or fully disabled),
+- keep same output format and lower latency behavior,
+- retain rollback toggle.
+
+This is optional and separate from callback fix.
