@@ -1,37 +1,59 @@
 
+# Fix: Product Collections Not Showing After Voice Recommendations
 
-# Fix Recommendation Responses + Exact Shopify Script
+## Current Setup
 
-## Problems Identified
+The system works like this:
+1. User speaks a request like "suggest party wear" or "dost ki shaadi"
+2. Backend AI receives the request with the product catalog and a system prompt
+3. AI is instructed to output `:::action` blocks (e.g., `navigate_to_search` with a query like "party perfume") alongside its spoken response
+4. Widget extracts these action blocks, then after speaking the response, navigates the browser to Shopify's search page (`/search?q=party+perfume`)
+5. The real Shopify search results page shows the product collection
 
-1. **AI gateway 503 errors** — The AI service occasionally returns "503 no healthy upstream", causing the widget to show "Something went wrong" or get stuck in processing state with no recovery.
-2. **No retry on failure** — When the AI call fails, the widget doesn't retry, leaving users without a response.
-3. **Model sometimes ignores native display instructions** — The very long system prompt (~600+ lines) can cause the AI to occasionally output `:::product` blocks instead of `:::action` blocks in native display mode, resulting in no visible navigation.
+## The Problem
 
-## Plan
+The AI model sometimes **speaks about products but forgets to output the `:::action` block**. Without the action block, the widget has nothing to navigate to -- so the user hears product names but sees no collection/search results.
 
-### 1. Add retry logic in the widget for failed AI calls
-**File: `public/ai-chat-widget.js`**
+## Fix (Two Parts)
 
-In the `sendToChat` function (around line 665), add retry logic: if the chat endpoint returns a non-200 status (especially 503), retry once after 2 seconds before giving up.
+### 1. Add a fallback auto-search in the widget
+**File: `public/ai-chat-widget.js`** (in `onChatComplete` function, ~line 743)
 
-### 2. Add fallback for 503 errors in the edge function
-**File: `supabase/functions/chat/index.ts`**
+If the AI response mentions products but contains NO `navigate_to_search`, `navigate_to_collection`, or `open_product` action, the widget will auto-generate a search navigation from the user's original query. This is the safety net.
 
-Around line 808, when the AI gateway returns 503, retry once with a 1-second delay before returning an error to the client. This handles transient upstream issues.
+Logic:
+```
+if (isShopifyPlatform && actions.length === 0 && looksLikeProductRecommendation(fullResponse)) {
+  pendingNavigation = "/search?q=" + encodeURIComponent(simplifyQuery(query));
+}
+```
 
-### 3. Improve error recovery in the widget voice state
-**File: `public/ai-chat-widget.js`**
+`looksLikeProductRecommendation` checks if the response contains price indicators (Rs, rupees, numbers with prices) or multiple product-like mentions. `simplifyQuery` extracts key search terms from the user's spoken query (strips filler words).
 
-In the error handler (around line 674), ensure the widget resets to "idle" state and auto-restarts listening after showing the error, instead of getting stuck.
+### 2. Strengthen the system prompt
+**File: `supabase/functions/chat/index.ts`** (~line 597)
 
-### 4. Exact Shopify Script Tag
+Add a stronger reinforcement near the end of the native display instructions:
 
-This is the complete script tag to place in your Shopify `theme.liquid` file, just before the closing `</body>` tag:
+```
+CRITICAL REMINDER: You MUST include a :::action block in EVERY response that discusses products.
+If you recommend products, you MUST also output navigate_to_search or navigate_to_collection.
+NEVER describe products without an accompanying action block. The user cannot see products unless you include the action.
+```
 
+## What Changes
+
+| File | Change |
+|------|--------|
+| `public/ai-chat-widget.js` | Add fallback auto-search when AI omits action blocks but response looks like product recommendations |
+| `supabase/functions/chat/index.ts` | Add stronger prompt reinforcement to always include action blocks with product recommendations |
+
+## After Deploying
+
+Update Shopify script tag to `?v=109` and hard refresh:
 ```text
 <script
-  src="https://voice-cart-guide.lovable.app/ai-chat-widget.js?v=108"
+  src="https://voice-cart-guide.lovable.app/ai-chat-widget.js?v=109"
   data-store-id="bella-vita"
   data-api-url="https://cjgyelmkjgwgwbwydddz.supabase.co"
   data-api-key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ3llbG1ramd3Z3did3lkZGR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MjUzNzUsImV4cCI6MjA4NzUwMTM3NX0.pdf-BL2W6o4PFsiPjXYjanDWCEswWpt6SZoSqS86-sU"
@@ -40,15 +62,3 @@ This is the complete script tag to place in your Shopify `theme.liquid` file, ju
   data-platform="shopify"
 ></script>
 ```
-
-Important: bump `?v=108` each time you update. After placing this, do a hard refresh (Ctrl+Shift+R).
-
-## Technical Changes Summary
-
-| File | Change |
-|------|--------|
-| `public/ai-chat-widget.js` | Add 1-retry logic in `sendToChat` for 503/500 errors; improve error recovery to auto-restart listening |
-| `supabase/functions/chat/index.ts` | Add 1-retry with 1s delay when AI gateway returns 503 |
-
-These changes ensure that transient AI service failures don't break the recommendation flow for users.
-
