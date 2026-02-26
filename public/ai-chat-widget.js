@@ -38,19 +38,21 @@
     }\
     /* Mic button */\
     .aicw-mic-btn {\
-      width: 44px; height: 44px; border-radius: 50%; border: none;\
-      cursor: pointer; display: flex; align-items: center; justify-content: center;\
+      min-width: 44px; height: 44px; border-radius: 22px; border: none;\
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;\
       transition: transform 0.2s, background 0.2s; position: relative;\
-      color: #fff; flex-shrink: 0;\
+      color: #fff; flex-shrink: 0; padding: 0 14px;\
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\
+      font-size: 13px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;\
     }\
-    .aicw-mic-btn svg { width: 22px; height: 22px; position: relative; z-index: 1; }\
+    .aicw-mic-btn svg { width: 18px; height: 18px; position: relative; z-index: 1; flex-shrink: 0; }\
     .aicw-mic-btn.idle { background: " + primaryColor + "; }\
     .aicw-mic-btn.listening { background: #ef4444; }\
     .aicw-mic-btn.processing { background: #f59e0b; pointer-events: none; }\
     .aicw-mic-btn.speaking { background: #10b981; pointer-events: none; }\
-    .aicw-mic-btn:hover { transform: scale(1.08); }\
+    .aicw-mic-btn:hover { transform: scale(1.05); }\
     .aicw-mic-btn::before {\
-      content: ''; position: absolute; inset: -4px; border-radius: 50%;\
+      content: ''; position: absolute; inset: -4px; border-radius: 22px;\
       border: 2px solid; opacity: 0; animation: none;\
     }\
     .aicw-mic-btn.idle::before {\
@@ -61,7 +63,7 @@
     }\
     @keyframes aicw-pulse {\
       0%, 100% { transform: scale(1); opacity: 0.3; }\
-      50% { transform: scale(1.2); opacity: 0; }\
+      50% { transform: scale(1.15); opacity: 0; }\
     }\
     /* Bar info */\
     .aicw-bar-info {\
@@ -105,15 +107,18 @@
     }\
     /* FAB (closed state) */\
     .aicw-fab {\
-      width: 56px; height: 56px; border-radius: 50%; border: none;\
+      height: 48px; border-radius: 24px; border: none;\
       background: " + primaryColor + "; color: #fff; cursor: pointer;\
-      display: flex; align-items: center; justify-content: center;\
+      display: flex; align-items: center; justify-content: center; gap: 8px;\
       box-shadow: 0 4px 16px rgba(0,0,0,0.2);\
       transition: transform 0.2s;\
       position: fixed; bottom: 24px; right: 24px;\
+      padding: 0 20px;\
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\
+      font-size: 14px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;\
     }\
-    .aicw-fab:hover { transform: scale(1.08); }\
-    .aicw-fab svg { width: 28px; height: 28px; }\
+    .aicw-fab:hover { transform: scale(1.05); }\
+    .aicw-fab svg { width: 20px; height: 20px; }\
     /* Spinner */\
     .aicw-spinner {\
       width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.3);\
@@ -915,8 +920,8 @@
     // ── Render ────────────────────────────────────────────────────
     function render() {
       if (!isOpen) {
-        // Show FAB
-        root.innerHTML = '<button class="aicw-fab" aria-label="Open assistant">' + ICONS.mic + '</button>';
+        // Show FAB — "Bella AI" text button
+        root.innerHTML = '<button class="aicw-fab" aria-label="Open assistant">' + ICONS.mic + '<span>Bella AI</span></button>';
         root.querySelector(".aicw-fab").addEventListener("click", function () {
           isOpen = true;
           persistState();
@@ -928,27 +933,32 @@
 
       // Determine mic state
       var micIcon = ICONS.mic;
+      var micLabel = '<span>Bella AI</span>';
       var micClass = "idle";
       var statusText = "Tap to speak";
       var subText = title;
 
       if (isWelcomeLoading) {
         micIcon = '<div class="aicw-spinner"></div>';
+        micLabel = '';
         micClass = "processing";
         statusText = "Loading...";
         subText = "Setting up your assistant";
       } else if (voiceState === "listening") {
         micIcon = ICONS.micOff;
+        micLabel = '';
         micClass = "listening";
         statusText = "Listening...";
         subText = "Speak now";
       } else if (voiceState === "processing") {
         micIcon = '<div class="aicw-spinner"></div>';
+        micLabel = '';
         micClass = "processing";
         statusText = voiceStatusText || "Thinking...";
         subText = "";
       } else if (voiceState === "speaking") {
         micIcon = ICONS.voice;
+        micLabel = '';
         micClass = "speaking";
         statusText = "Speaking...";
         subText = "";
@@ -959,7 +969,7 @@
       // Build floating bar only (no panel, no overlay)
       var barHtml = '\
         <div class="aicw-floating-bar">\
-          <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + '</button>\
+          <button class="aicw-mic-btn ' + micClass + '" aria-label="Toggle microphone">' + micIcon + micLabel + '</button>\
           <div class="aicw-bar-info">\
             <div class="aicw-bar-status">' + statusText + '</div>\
             ' + (subText ? '<div class="aicw-bar-sub">' + subText + '</div>' : '') + '\
