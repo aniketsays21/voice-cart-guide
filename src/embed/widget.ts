@@ -103,9 +103,11 @@ export function createWidget(config: WidgetConfig) {
   let isOpen = false;
   let pendingActions: ActionBlock[] = [];
 
-  // Handle parsed action blocks from AI responses
+  // Handle parsed action blocks from AI responses — execute immediately during streaming
   function handleAction(action: ActionBlock) {
     pendingActions.push(action);
+    // Execute immediately so actions fire while Priya is still speaking
+    executePendingActions();
   }
 
   // Execute collected actions after render
@@ -362,8 +364,7 @@ export function createWidget(config: WidgetConfig) {
       render();
       // Enrich product cards with live Shopify data
       enrichProductCards();
-      // Execute any Shopify actions parsed from the response
-      executePendingActions();
+      // Actions are now executed immediately during streaming via handleAction()
     }
   }
 
