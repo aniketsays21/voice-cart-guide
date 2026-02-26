@@ -41,7 +41,7 @@ async function trySarvamTTS(apiKey: string, text: string, langCode: string): Pro
       inputs: [text],
       target_language_code: langCode === "en-IN" ? "hi-IN" : langCode,
       model: "bulbul:v2",
-      speaker: "arvind",
+      speaker: "priya",
       pace: 1.0,
     }),
   });
