@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.sarvam-tts]
 verify_jwt = false
+
+[functions.schedule-call]
+verify_jwt = false
+
+[functions.trigger-scheduled-calls]
+verify_jwt = false
