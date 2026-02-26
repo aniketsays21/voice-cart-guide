@@ -1,28 +1,50 @@
 
 
-# Change Assistant Identity from "Priya" to "Bella AI"
+# Two Changes: Smarter Checkout + Shorter Welcome Greeting
 
-## Problem
-The system prompt in the backend chat function still identifies the assistant as "Priya" (44 references). This is why the live Shopify store keeps saying "Hi I'm Priya" when users click the voice agent button.
+## Issue 1: Checkout Should Use Browser Click, Not Direct Navigation
 
-## Changes
+Currently, when the user says "checkout karo", the bot navigates directly to `/checkout` via the Shopify AJAX approach. Instead, it should:
 
-### 1. Backend: `supabase/functions/chat/index.ts`
-Replace all 44 references to "Priya" with "Bella AI" throughout the system prompt. Key sections to update:
+1. First navigate the user to `/cart` (if not already there)
+2. Then find and click the native checkout button on the cart page (using existing `clickNativeCheckout()` function)
 
-- **Line 462**: `"Tera naam PRIYA hai"` -> `"Tera naam BELLA AI hai"`
-- **Lines 466-471**: The entire "YOUR IDENTITY - PRIYA" section renamed to "YOUR IDENTITY - BELLA AI" with all self-references updated
-- **Line 468**: Introduction changed to: `"Hi, I am Bella AI, here are the best selling products of Bella Vita!"` (English) and the Hindi equivalent
-- **Lines 474**: Welcome behavior greeting updated to: `"Hi I am Bella AI, here are best selling products of Bella Vita. Hindi: Namaste, main Bella AI hoon, ye rahe Bella Vita ke bestselling products!"`
-- **Lines 494, 499, 501, 505-510, 529, 536**: All remaining "Priya" references replaced with "Bella AI"
+This mirrors how a real user would check out — go to cart, then click the checkout button.
 
-### 2. Widget: `public/ai-chat-widget.js`
-- Update the welcome trigger message (around line 898) to match the new greeting:
-  `"Hi I am Bella AI, here are best selling products of Bella Vita. Namaste, main Bella AI hoon, ye rahe Bella Vita ke bestselling products!"`
+### Changes in `public/ai-chat-widget.js`
 
-### 3. Welcome Message Content
-The new welcome greeting when users click the button will be:
-- **English**: "Hi, I am Bella AI! Here are the best selling products of Bella Vita."
-- **Hindi**: "Namaste, main Bella AI hoon! Ye rahe Bella Vita ke bestselling products."
+- Modify the `navigate_to_checkout` action handler (around line 755-756) to:
+  - If user is already on `/cart`, click the native checkout button directly
+  - If user is NOT on `/cart`, navigate to `/cart` first, then after page load click the checkout button
+- Add a small mechanism (e.g., URL parameter or sessionStorage flag) so that after navigating to `/cart`, the widget auto-clicks the checkout button once the page loads
 
-After these changes, you'll need to bump your Shopify script version (e.g., `?v=105`) and hard refresh.
+---
+
+## Issue 2: Welcome Greeting Should Be Short — Just Introduction
+
+Currently, the welcome message sends a long query asking for bestselling products, which makes the bot respond with a product list immediately. Instead, Bella AI should just introduce itself and wait for the user to speak.
+
+### Changes in `public/ai-chat-widget.js`
+
+- Update the `triggerWelcome()` function (line 896) to send a simpler greeting:
+  - New welcome query: `"Hi, introduce yourself briefly as Bella AI"`
+- This will make the bot just say something like "Hi I am Bella AI, how can I help you?" and wait for user input
+
+### Changes in `supabase/functions/chat/index.ts`
+
+- Update the `WELCOME BEHAVIOR` section (lines 473-475) to instruct the bot:
+  - On the first greeting, just introduce yourself briefly: "Hi, I am Bella AI! Aapki shopping assistant. Batao kya chahiye?"
+  - Do NOT show products until the user asks
+  - Keep it short since it will be spoken aloud
+
+---
+
+## Summary of File Changes
+
+| File | What Changes |
+|------|-------------|
+| `public/ai-chat-widget.js` | Checkout flow: navigate to cart then click checkout button; Welcome: shorter intro query |
+| `supabase/functions/chat/index.ts` | Welcome behavior prompt: introduce only, no products until asked |
+
+After these changes, bump your Shopify script version (e.g., `?v=106`) and hard refresh.
+
