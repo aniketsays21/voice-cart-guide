@@ -136,7 +136,8 @@ const Chat: React.FC = () => {
       if (!resp.ok) { setAvatarState("idle"); isSpeakingRef.current = false; return; }
       const data = await resp.json();
       if (!data.audio) { setAvatarState("idle"); isSpeakingRef.current = false; return; }
-      const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
+      const mimeType = data.audioFormat === "wav" ? "audio/wav" : "audio/mpeg";
+      const audio = new Audio(`data:${mimeType};base64,${data.audio}`);
       audioRef.current = audio;
       
       return new Promise<void>((resolve) => {

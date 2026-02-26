@@ -28,6 +28,51 @@ async function checkRateLimit(supabase: any, sessionId: string, functionName: st
   return true;
 }
 
+// --- Sarvam STT ---
+async function trySarvamSTT(apiKey: string, audioBlob: Blob): Promise<{ ok: boolean; status: number; transcript?: string; language_code?: string }> {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.wav");
+  formData.append("model", "saaras:v2");
+  formData.append("language_code", "unknown");
+
+  const resp = await fetch("https://api.sarvam.ai/speech-to-text/transcribe", {
+    method: "POST",
+    headers: { "api-subscription-key": apiKey },
+    body: formData,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error(`Sarvam STT error: ${resp.status} ${errText}`);
+    return { ok: false, status: resp.status };
+  }
+
+  const data = await resp.json();
+  return { ok: true, status: 200, transcript: data.transcript || "", language_code: data.language_code || "unknown" };
+}
+
+// --- ElevenLabs STT fallback ---
+async function tryElevenLabsSTT(apiKey: string, audioBlob: Blob, ext: string): Promise<{ ok: boolean; status: number; transcript?: string; language_code?: string }> {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording" + ext);
+  formData.append("model_id", "scribe_v2");
+
+  const resp = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+    method: "POST",
+    headers: { "xi-api-key": apiKey },
+    body: formData,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error(`ElevenLabs STT error: ${resp.status} ${errText}`);
+    return { ok: false, status: resp.status };
+  }
+
+  const data = await resp.json();
+  return { ok: true, status: 200, transcript: data.text || "", language_code: data.language_code || "unknown" };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -36,47 +81,34 @@ Deno.serve(async (req) => {
   const startTime = Date.now();
 
   try {
-    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const body = await req.json();
-    const { audio, language_code, sessionId, audioMimeType, audioMimeTypeRaw } = body;
+    const { audio, sessionId, audioMimeType, audioMimeTypeRaw } = body;
 
-    // Input validation
     if (!audio || typeof audio !== "string") {
       return new Response(JSON.stringify({ error: "audio (base64 string) is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (audio.length > 5_000_000) {
       return new Response(JSON.stringify({ error: "Audio too large (max 5MB base64)" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Rate limiting
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const effectiveSessionId = sessionId || "anonymous";
 
     const allowed = await checkRateLimit(supabase, effectiveSessionId, "stt", 20);
     if (!allowed) {
       return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait." }), {
-        status: 429,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Decode base64 audio to binary
+    // Decode base64 audio
     const binaryAudio = Uint8Array.from(atob(audio), (c) => c.charCodeAt(0));
 
-    // Determine file extension from MIME type
+    // Determine MIME type
     function sanitizeMime(raw: string | undefined): string {
       if (!raw) return "audio/webm";
       const base = raw.toLowerCase().split(";")[0].trim();
@@ -87,7 +119,6 @@ Deno.serve(async (req) => {
       return "audio/webm";
     }
 
-    // Container sniffing from first bytes
     function sniffContainer(bytes: Uint8Array): string | null {
       if (bytes.length < 12) return null;
       if (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return "audio/webm";
@@ -101,68 +132,69 @@ Deno.serve(async (req) => {
     const resolvedMime = sniffedMime || clientMime;
     const ext = resolvedMime.includes("mp4") ? ".mp4" : resolvedMime.includes("ogg") ? ".ogg" : resolvedMime.includes("wav") ? ".wav" : ".webm";
 
-    console.log(`STT audio: rawMime=${audioMimeTypeRaw || "n/a"}, clientNorm=${clientMime}, sniffed=${sniffedMime || "n/a"}, resolved=${resolvedMime}, bytes=${binaryAudio.length}`);
+    console.log(`STT audio: rawMime=${audioMimeTypeRaw || "n/a"}, resolved=${resolvedMime}, bytes=${binaryAudio.length}`);
 
-    // Build multipart form data for ElevenLabs STT
-    const formData = new FormData();
-    formData.append("file", new Blob([binaryAudio], { type: resolvedMime }), "recording" + ext);
-    formData.append("model_id", "scribe_v2");
-    // Let ElevenLabs auto-detect language for multilingual support
-    if (language_code) {
-      // Map language codes: hi-IN -> hin, en-IN -> eng
-      const langMap: Record<string, string> = {
-        "hi-IN": "hin",
-        "en-IN": "eng",
-        "hi": "hin",
-        "en": "eng",
-      };
-      const elevenlabsLang = langMap[language_code];
-      if (elevenlabsLang) {
-        formData.append("language_code", elevenlabsLang);
+    const audioBlob = new Blob([binaryAudio], { type: resolvedMime });
+
+    // --- Fallback chain: Sarvam Key1 -> Sarvam Key2 -> ElevenLabs ---
+    const sarvamKey1 = Deno.env.get("SARVAM_API_KEY");
+    const sarvamKey2 = Deno.env.get("SARVAM_API_KEY_2");
+    const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY");
+
+    let result: { ok: boolean; status: number; transcript?: string; language_code?: string } | null = null;
+    let provider = "unknown";
+
+    // Try Sarvam Key 1
+    if (sarvamKey1) {
+      console.log("STT: Trying Sarvam key1...");
+      result = await trySarvamSTT(sarvamKey1, audioBlob);
+      if (result.ok) { provider = "sarvam-key1"; }
+      else {
+        console.log(`STT: Sarvam key1 failed (${result.status}), trying key2...`);
+        result = null;
       }
     }
 
-    const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-      },
-      body: formData,
-    });
+    // Try Sarvam Key 2
+    if (!result && sarvamKey2) {
+      result = await trySarvamSTT(sarvamKey2, audioBlob);
+      if (result.ok) { provider = "sarvam-key2"; }
+      else {
+        console.log(`STT: Sarvam key2 failed (${result.status}), falling back to ElevenLabs...`);
+        result = null;
+      }
+    }
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("ElevenLabs STT error:", response.status, errText);
-      return new Response(JSON.stringify({ error: "Speech-to-text failed", details: errText }), {
-        status: response.status,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Try ElevenLabs
+    if (!result && elevenLabsKey) {
+      result = await tryElevenLabsSTT(elevenLabsKey, audioBlob, ext);
+      if (result.ok) { provider = "elevenlabs"; }
+      else { result = null; }
+    }
+
+    if (!result || !result.ok) {
+      return new Response(JSON.stringify({ error: "All STT providers failed" }), {
+        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const result = await response.json();
+    console.log(`STT: Success via ${provider}, transcript="${result.transcript?.slice(0, 50)}..."`);
 
     // Log request
     try {
       await supabase.from("request_logs").insert({
-        session_id: effectiveSessionId,
-        function_name: "stt",
-        message_length: audio.length,
-        response_time_ms: Date.now() - startTime,
+        session_id: effectiveSessionId, function_name: "stt",
+        message_length: audio.length, response_time_ms: Date.now() - startTime,
       });
     } catch {}
 
-    // ElevenLabs returns { text: "...", ... } — map to our existing response format
-    return new Response(JSON.stringify({ 
-      transcript: result.text || "", 
-      language_code: result.language_code || "unknown" 
-    }), {
+    return new Response(JSON.stringify({ transcript: result.transcript, language_code: result.language_code }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("STT error:", error);
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });

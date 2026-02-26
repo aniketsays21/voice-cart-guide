@@ -29,11 +29,64 @@ async function checkRateLimit(supabase: any, sessionId: string, functionName: st
   return true;
 }
 
-// Select ElevenLabs voice based on language
-// Using "River" (SAz9YHcvj6GT2YYXdXww) - warm, friendly tone that works well
-// with Hinglish/Indian English on multilingual v2
-function selectVoice(langCode: string): string {
-  return "SAz9YHcvj6GT2YYXdXww"; // River - natural Indian-friendly voice
+// --- Sarvam TTS ---
+async function trySarvamTTS(apiKey: string, text: string, langCode: string): Promise<{ ok: boolean; status: number; audio?: string }> {
+  const resp = await fetch("https://api.sarvam.ai/text-to-speech", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-subscription-key": apiKey,
+    },
+    body: JSON.stringify({
+      inputs: [text],
+      target_language_code: langCode === "en-IN" ? "hi-IN" : langCode,
+      model: "bulbul:v2",
+      speaker: "arvind",
+      pace: 1.0,
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error(`Sarvam TTS error: ${resp.status} ${errText}`);
+    return { ok: false, status: resp.status };
+  }
+
+  const data = await resp.json();
+  if (data.audios && data.audios.length > 0) {
+    return { ok: true, status: 200, audio: data.audios[0] };
+  }
+  return { ok: false, status: 500 };
+}
+
+// --- ElevenLabs TTS fallback ---
+async function tryElevenLabsTTS(apiKey: string, text: string): Promise<{ ok: boolean; status: number; audio?: string }> {
+  const voiceId = "SAz9YHcvj6GT2YYXdXww"; // River
+  const resp = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: { stability: 0.35, similarity_boost: 0.85, style: 0.6, use_speaker_boost: true, speed: 1.0 },
+      }),
+    }
+  );
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error(`ElevenLabs TTS error: ${resp.status} ${errText}`);
+    return { ok: false, status: resp.status };
+  }
+
+  const audioBuffer = await resp.arrayBuffer();
+  const audioBase64 = base64Encode(audioBuffer);
+  return { ok: true, status: 200, audio: audioBase64 };
 }
 
 Deno.serve(async (req) => {
@@ -44,107 +97,97 @@ Deno.serve(async (req) => {
   const startTime = Date.now();
 
   try {
-    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const body = await req.json();
     const { text, target_language_code, sessionId } = body;
 
-    // Input validation
     if (!text || typeof text !== "string") {
       return new Response(JSON.stringify({ error: "text (string) is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (text.length > 2000) {
       return new Response(JSON.stringify({ error: "Text too long (max 2000 chars)" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Rate limiting
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const effectiveSessionId = sessionId || "anonymous";
 
     const allowed = await checkRateLimit(supabase, effectiveSessionId, "tts", 20);
     if (!allowed) {
       return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait." }), {
-        status: 429,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Limit text to 1000 chars for TTS (increased for longer Hinglish responses)
     const truncatedText = text.slice(0, 1000);
     const langCode = target_language_code || "en-IN";
-    const voiceId = selectVoice(langCode);
 
-    console.log(`TTS: lang=${langCode}, voice=${voiceId}, textLen=${truncatedText.length}`);
+    // --- Fallback chain: Sarvam Key1 -> Sarvam Key2 -> ElevenLabs ---
+    const sarvamKey1 = Deno.env.get("SARVAM_API_KEY");
+    const sarvamKey2 = Deno.env.get("SARVAM_API_KEY_2");
+    const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY");
 
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: truncatedText,
-          model_id: "eleven_multilingual_v2",
-          voice_settings: {
-            stability: 0.35,
-            similarity_boost: 0.85,
-            style: 0.6,
-            use_speaker_boost: true,
-            speed: 1.0,
-          },
-        }),
+    let result: { ok: boolean; status: number; audio?: string } | null = null;
+    let audioFormat = "wav";
+    let provider = "unknown";
+
+    // Try Sarvam Key 1
+    if (sarvamKey1) {
+      console.log(`TTS: Trying Sarvam key1, lang=${langCode}, textLen=${truncatedText.length}`);
+      result = await trySarvamTTS(sarvamKey1, truncatedText, langCode);
+      if (result.ok) { provider = "sarvam-key1"; }
+      else if (result.status === 429 || result.status === 403) {
+        console.log(`TTS: Sarvam key1 failed (${result.status}), trying key2...`);
+        result = null;
+      } else {
+        // Other error from Sarvam, still try fallbacks
+        console.log(`TTS: Sarvam key1 failed (${result.status}), trying key2...`);
+        result = null;
       }
-    );
+    }
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("ElevenLabs TTS error:", response.status, errText);
-      return new Response(JSON.stringify({ error: "Text-to-speech failed", details: errText }), {
-        status: response.status,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Try Sarvam Key 2
+    if (!result && sarvamKey2) {
+      result = await trySarvamTTS(sarvamKey2, truncatedText, langCode);
+      if (result.ok) { provider = "sarvam-key2"; }
+      else {
+        console.log(`TTS: Sarvam key2 failed (${result.status}), falling back to ElevenLabs...`);
+        result = null;
+      }
+    }
+
+    // Try ElevenLabs
+    if (!result && elevenLabsKey) {
+      result = await tryElevenLabsTTS(elevenLabsKey, truncatedText);
+      if (result.ok) { provider = "elevenlabs"; audioFormat = "mp3"; }
+      else { result = null; }
+    }
+
+    if (!result || !result.ok) {
+      return new Response(JSON.stringify({ error: "All TTS providers failed" }), {
+        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // ElevenLabs returns raw audio binary — encode to base64
-    const audioBuffer = await response.arrayBuffer();
-    const audioBase64 = base64Encode(audioBuffer);
+    console.log(`TTS: Success via ${provider}`);
 
     // Log request
     try {
       await supabase.from("request_logs").insert({
-        session_id: effectiveSessionId,
-        function_name: "tts",
-        message_length: text.length,
-        response_time_ms: Date.now() - startTime,
+        session_id: effectiveSessionId, function_name: "tts",
+        message_length: text.length, response_time_ms: Date.now() - startTime,
       });
     } catch {}
 
-    // Return in same format as before, but with audioFormat indicator
-    return new Response(JSON.stringify({ 
-      audio: audioBase64, 
-      audioFormat: "mp3"
-    }), {
+    return new Response(JSON.stringify({ audio: result.audio, audioFormat }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("TTS error:", error);
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
