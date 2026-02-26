@@ -30,7 +30,10 @@ export type Msg = { role: "user" | "assistant"; content: string };
 
 /** Parsed action block from AI response */
 export interface ActionBlock {
-  type: "add_to_cart" | "open_product" | "navigate_to_checkout" | "navigate_to_cart";
+  type: "add_to_cart" | "open_product" | "navigate_to_checkout" | "navigate_to_cart" | "schedule_call";
   product_name?: string;
   product_link?: string;
+  phone_number?: string;
+  scheduled_time?: string;
+  context?: string;
 }
