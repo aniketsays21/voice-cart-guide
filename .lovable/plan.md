@@ -1,100 +1,92 @@
 
 
-# Click Native Shopify Buttons Instead of API Calls
+# Switch to Sarvam AI for TTS and STT with Fallback Chain
 
 ## Summary
 
-When the user is on a Product Detail Page (PDP) and says "add to cart", the bot will **find and click the native Add to Cart button** on the Shopify theme instead of calling `/cart/add.js` via API. Similarly for checkout, the existing native button click approach will be kept and improved. This makes the interaction feel like a real person is controlling the browser.
+Replace ElevenLabs as the primary voice provider with Sarvam AI, which offers native Indian voices (pure Hindi/Hinglish). The system will try three providers in order:
+
+1. **Sarvam AI Key 1** (primary)
+2. **Sarvam AI Key 2** (fallback)
+3. **ElevenLabs** (last resort)
+
+When any key returns a 429 (rate limit) or 403 (credits exhausted) error, the system automatically tries the next one.
 
 ## What Changes
 
-### 1. Native "Add to Cart" Click (`public/ai-chat-widget.js`)
+### 1. Store the two Sarvam API keys as secrets
 
-Currently, `add_to_cart` action calls `addToCartByProduct()` which uses the `/cart/add.js` API. This works but doesn't interact with the actual page UI.
+- `SARVAM_API_KEY` already exists -- will be updated to Key 1
+- `SARVAM_API_KEY_2` -- new secret for Key 2
 
-**New approach:**
-- When on a PDP (`/products/*`), first try to click the native "Add to Cart" button using common Shopify theme selectors:
-  - `[type="submit"][name="add"]` (Dawn theme default)
-  - `button.product-form__submit`
-  - `.btn-addtocart`
-  - `form[action="/cart/add"] button[type="submit"]`
-  - `#AddToCart`
-- If the native button is found and clicked, show a success toast
-- If no native button is found (e.g., user is not on the PDP), fall back to the existing API approach (`/cart/add.js`)
+### 2. Rewrite `supabase/functions/sarvam-tts/index.ts`
 
-### 2. Improved Checkout Click (already partially done)
-
-The existing `shopifyGoToCheckout()` already tries to click native checkout buttons. We'll expand the selector list to cover more Shopify themes:
-- `[name="checkout"]`
-- `.cart__checkout-button`
-- `button[type="submit"][value*="Check"]`
-- `a[href="/checkout"]`
-- `.cart__checkout`
-- `#checkout`
-
-### 3. Context-Aware Add to Cart
-
-When the user is on a PDP and says "add this to cart" (without specifying a product name), the bot should:
-- Detect we're on `/products/*`
-- Click the native Add to Cart button directly (no need to search for the product -- it's already on screen)
-- This is the most natural flow: user browses to a product page, bot clicks the button
-
-When the user is NOT on a PDP but names a specific product, fall back to the API approach.
-
-### 4. System Prompt Update (`supabase/functions/chat/index.ts`)
-
-Add instructions telling the LLM:
-- When the user is on a product page and says "add to cart" or "isko cart mein daalo", output an `add_to_cart` action. The widget will click the native button.
-- When the user says "checkout karo" or "buy now", output `navigate_to_cart` first (if not already on cart), then `navigate_to_checkout` to click the checkout button.
-
-## Technical Details
-
-### New helper function: `clickNativeAddToCart()`
-
+**New flow:**
 ```text
-function clickNativeAddToCart():
-  selectors = [
-    '[type="submit"][name="add"]',
-    'button.product-form__submit',
-    'form[action="/cart/add"] button[type="submit"]',
-    '#AddToCart', '.btn-addtocart',
-    'button[data-action="add-to-cart"]'
-  ]
-  for each selector:
-    btn = document.querySelector(selector)
-    if btn and btn is visible:
-      btn.click()
-      return true
-  return false
+Try Sarvam Key 1 (bulbul:v3, speaker "Ratan")
+  -> If 429/403, try Sarvam Key 2
+    -> If 429/403, try ElevenLabs
+      -> If all fail, return error
 ```
 
-### Updated `add_to_cart` handler logic
+**Sarvam TTS API call:**
+- URL: `https://api.sarvam.ai/text-to-speech`
+- Header: `api-subscription-key: <key>`
+- Body: `{ text, target_language_code: "hi-IN", model: "bulbul:v3", speaker: "Ratan", pace: 1.0 }`
+- Response: `{ audios: ["base64-wav-string"] }`
 
+The response format stays the same for the client (`{ audio, audioFormat }`), but `audioFormat` will be `"wav"` when Sarvam is used and `"mp3"` when ElevenLabs is used.
+
+**Speaker choice:** "Ratan" -- a natural Indian male voice on bulbul:v3 that sounds authentic for Hinglish conversations. Can be changed easily.
+
+### 3. Rewrite `supabase/functions/sarvam-stt/index.ts`
+
+**New flow:**
 ```text
-if action.type == "add_to_cart":
-  if on /products/* page:
-    clicked = clickNativeAddToCart()
-    if clicked:
-      showToast("Added to cart!")
-      dispatch cart:refresh event
-    else:
-      fall back to API (addToCartByProduct)
-  else:
-    use API (addToCartByProduct) as before
+Try Sarvam Key 1 (saaras:v3, mode "transcribe")
+  -> If 429/403, try Sarvam Key 2
+    -> If 429/403, try ElevenLabs
+      -> If all fail, return error
+```
+
+**Sarvam STT API call:**
+- URL: `https://api.sarvam.ai/speech-to-text/transcribe`
+- Multipart form: `file` (audio blob), `model: "saaras:v3"`, `language_code: "unknown"` (auto-detect)
+- Response: `{ transcript: "...", language_code: "hi-IN" }`
+
+The response format already matches what the client expects.
+
+### 4. Update client audio handling (`src/pages/Chat.tsx`)
+
+Sarvam returns WAV audio (not MP3). The client already uses base64 data URIs for playback, so we just need to handle the `audioFormat` field:
+- If `audioFormat === "wav"` -> use `data:audio/wav;base64,...`
+- If `audioFormat === "mp3"` -> use `data:audio/mpeg;base64,...` (existing behavior)
+
+## How Credit Exhaustion Detection Works
+
+When Sarvam API credits are exhausted, they return:
+- **HTTP 429**: Too many requests / rate limit
+- **HTTP 403**: Forbidden (subscription expired or credits used up)
+
+The edge function catches these status codes and immediately retries with the next key. Console logs will indicate which provider was used:
+```text
+TTS: Sarvam key1 failed (429), trying key2...
+TTS: Sarvam key2 failed (403), falling back to ElevenLabs...
 ```
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `public/ai-chat-widget.js` | Add `clickNativeAddToCart()` helper; update `add_to_cart` handler to try native click first on PDP; expand checkout button selectors |
-| `supabase/functions/chat/index.ts` | Update prompt to instruct LLM about context-aware add-to-cart and checkout flows |
+| Secrets | Add `SARVAM_API_KEY_2`; update `SARVAM_API_KEY` to new value |
+| `supabase/functions/sarvam-tts/index.ts` | Rewrite to use Sarvam TTS as primary with fallback chain |
+| `supabase/functions/sarvam-stt/index.ts` | Rewrite to use Sarvam STT as primary with fallback chain |
+| `src/pages/Chat.tsx` | Handle `audioFormat: "wav"` in addition to `"mp3"` for playback |
 
 ## What Stays the Same
-- Search/collection navigation -- unchanged
-- Single product navigation (open_product) -- unchanged
-- Voice pipeline (STT/TTS) -- unchanged
-- Session persistence -- unchanged
-- Floating bar UI -- unchanged
-- API fallback for add-to-cart when not on PDP -- unchanged
+- Chat function (LLM reasoning) -- unchanged
+- Widget embed code -- unchanged
+- Rate limiting logic -- unchanged
+- Session management -- unchanged
+- All existing client UI -- unchanged
 
