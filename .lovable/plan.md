@@ -1,50 +1,31 @@
 
 
-# Two Changes: Smarter Checkout + Shorter Welcome Greeting
+# Update Embed Widget Checkout + Auto-Checkout Listener
 
-## Issue 1: Checkout Should Use Browser Click, Not Direct Navigation
+## What's Already Done
+The `shopifyGoToCheckout()` function in `src/embed/shopify.ts` already uses the new browser-click flow (navigate to `/cart`, set `sessionStorage` flag). The `widget.ts` checkout handler at line 144-147 calls this function, so the action dispatch is correct.
 
-Currently, when the user says "checkout karo", the bot navigates directly to `/checkout` via the Shopify AJAX approach. Instead, it should:
+## What's Missing
+The `widget.ts` `createWidget()` function is missing the **auto-checkout page-load listener** — the code that detects the `bellaai_auto_checkout` sessionStorage flag when the widget loads on `/cart` and clicks the native checkout button. Without this, the flow breaks: the user lands on `/cart` but nothing clicks checkout.
 
-1. First navigate the user to `/cart` (if not already there)
-2. Then find and click the native checkout button on the cart page (using existing `clickNativeCheckout()` function)
+## Changes
 
-This mirrors how a real user would check out — go to cart, then click the checkout button.
+### File: `src/embed/widget.ts`
 
-### Changes in `public/ai-chat-widget.js`
+Add auto-checkout listener after line 96 (after `isShopifyPlatform` detection), matching what was added to `public/ai-chat-widget.js`:
 
-- Modify the `navigate_to_checkout` action handler (around line 755-756) to:
-  - If user is already on `/cart`, click the native checkout button directly
-  - If user is NOT on `/cart`, navigate to `/cart` first, then after page load click the checkout button
-- Add a small mechanism (e.g., URL parameter or sessionStorage flag) so that after navigating to `/cart`, the widget auto-clicks the checkout button once the page loads
+```typescript
+// Auto-checkout: if we navigated to /cart with the flag, click checkout button
+if (isShopifyPlatform && typeof sessionStorage !== "undefined") {
+  if (sessionStorage.getItem("bellaai_auto_checkout") === "1" && window.location.pathname === "/cart") {
+    sessionStorage.removeItem("bellaai_auto_checkout");
+    setTimeout(() => {
+      // shopifyGoToCheckout will try clicking native button since we're on /cart
+      shopifyGoToCheckout();
+    }, 1500);
+  }
+}
+```
 
----
-
-## Issue 2: Welcome Greeting Should Be Short — Just Introduction
-
-Currently, the welcome message sends a long query asking for bestselling products, which makes the bot respond with a product list immediately. Instead, Bella AI should just introduce itself and wait for the user to speak.
-
-### Changes in `public/ai-chat-widget.js`
-
-- Update the `triggerWelcome()` function (line 896) to send a simpler greeting:
-  - New welcome query: `"Hi, introduce yourself briefly as Bella AI"`
-- This will make the bot just say something like "Hi I am Bella AI, how can I help you?" and wait for user input
-
-### Changes in `supabase/functions/chat/index.ts`
-
-- Update the `WELCOME BEHAVIOR` section (lines 473-475) to instruct the bot:
-  - On the first greeting, just introduce yourself briefly: "Hi, I am Bella AI! Aapki shopping assistant. Batao kya chahiye?"
-  - Do NOT show products until the user asks
-  - Keep it short since it will be spoken aloud
-
----
-
-## Summary of File Changes
-
-| File | What Changes |
-|------|-------------|
-| `public/ai-chat-widget.js` | Checkout flow: navigate to cart then click checkout button; Welcome: shorter intro query |
-| `supabase/functions/chat/index.ts` | Welcome behavior prompt: introduce only, no products until asked |
-
-After these changes, bump your Shopify script version (e.g., `?v=106`) and hard refresh.
+This is a single small addition (~8 lines) to `src/embed/widget.ts`. No other files need changes.
 
