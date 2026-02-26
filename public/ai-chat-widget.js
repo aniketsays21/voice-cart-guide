@@ -831,8 +831,10 @@
           currentAudio = null;
           // Navigate AFTER speaking finishes
           if (pendingNavigation && isShopifyPlatform) {
-            persistState();
-            executeNavigation();
+            setTimeout(function () {
+              persistState();
+              executeNavigation();
+            }, 1000);
             return;
           }
           if (voiceState === "speaking") {
