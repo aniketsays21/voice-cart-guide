@@ -385,7 +385,7 @@ const Chat: React.FC = () => {
 
     const triggerWelcome = async () => {
       // Play greeting TTS while fetching products
-      const greetingPromise = playTTS("Hello! Welcome to Bella Vita. Let me show you our best selling products.");
+      const greetingPromise = playTTS("Hello! Main Priya hoon, aapki personal shopping assistant. Aaj main aapko Bella Vita ke best products dikhati hoon.");
 
       const welcomePrompt = "Hi, show me top selling Bella Vita products";
       setLastQuery(welcomePrompt);
@@ -528,9 +528,9 @@ const Chat: React.FC = () => {
           <div className="flex items-center gap-3 px-4 py-2 border-b border-border animate-fade-in">
             <TalkingAvatar state={avatarState} size="small" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground">Bella Vita AI</p>
+              <p className="text-xs text-muted-foreground">Priya</p>
               <p className="text-sm font-medium text-foreground truncate">
-                {avatarState === "speaking" ? "Speaking..." : "Here are your results"}
+                {avatarState === "speaking" ? "Priya is speaking..." : "Here are your results"}
               </p>
             </div>
           </div>
