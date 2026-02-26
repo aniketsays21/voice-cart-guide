@@ -751,6 +751,41 @@
           if (isShopifyPlatform) pendingNavigation = "__checkout__";
         } else if (action.type === "navigate_to_cart") {
           if (isShopifyPlatform) pendingNavigation = "/cart";
+        } else if (action.type === "schedule_call") {
+          if (action.phone_number && action.scheduled_time) {
+            console.log("[CALLBACK] Scheduling call:", action.phone_number, action.scheduled_time);
+            showToast("Scheduling callback...", false);
+            fetch(apiUrl + "/functions/v1/schedule-call", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+              body: JSON.stringify({
+                phone_number: action.phone_number,
+                scheduled_time: action.scheduled_time,
+                conversation_id: conversationId,
+                session_id: sessionId,
+                context_summary: action.context || ""
+              })
+            }).then(function (r) {
+              if (!r.ok) {
+                console.error("[CALLBACK] schedule-call returned:", r.status);
+                showToast("Failed to schedule callback", true);
+                return null;
+              }
+              return r.json();
+            }).then(function (data) {
+              if (!data) return;
+              if (data.success) {
+                console.log("[CALLBACK] Scheduled successfully:", data);
+                showToast("Callback scheduled for " + action.scheduled_time + "!", false);
+              } else {
+                console.error("[CALLBACK] Error:", data);
+                showToast("Failed to schedule callback", true);
+              }
+            }).catch(function (err) {
+              console.error("[CALLBACK] Failed:", err);
+              showToast("Failed to schedule callback", true);
+            });
+          }
         }
       });
 
