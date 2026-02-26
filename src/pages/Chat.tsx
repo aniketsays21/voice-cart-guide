@@ -442,7 +442,7 @@ const Chat: React.FC = () => {
 
     const triggerWelcome = async () => {
       // Play greeting TTS while fetching products
-      const greetingPromise = playTTS("Hello! Main Priya hoon, aapki personal shopping assistant. Aaj main aapko Bella Vita ke best products dikhati hoon.");
+      const greetingPromise = playTTS("Hello, Welcome to Bella AI! I am your AI assistant to guide you through the process. Here are the bestselling products, what would you like to view? Namaste, Bella AI mein aapka swagat hai! Main aapki AI assistant hoon, aapko guide karne ke liye. Ye rahe bestselling products, aap kya dekhna chahenge?");
 
       const welcomePrompt = "Hi, show me top selling Bella Vita products";
       setLastQuery(welcomePrompt);

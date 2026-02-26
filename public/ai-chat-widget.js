@@ -830,22 +830,22 @@
         currentAudio.onended = function () {
           currentAudio = null;
           if (voiceState === "speaking") {
-            if (pendingNavigation && isShopifyPlatform) {
-              persistState();
-              executeNavigation();
-              return;
-            }
             setVoiceState("idle", "Tap to speak");
             setTimeout(startListening, 800);
           }
         };
         currentAudio.onerror = function () {
           currentAudio = null;
-          if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
           setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 1000);
         };
-        currentAudio.play().catch(function () {
+        currentAudio.play().then(function () {
+          // Navigate simultaneously while audio plays
+          if (pendingNavigation && isShopifyPlatform) {
+            persistState();
+            executeNavigation();
+          }
+        }).catch(function () {
           if (pendingNavigation && isShopifyPlatform) { executeNavigation(); return; }
           setVoiceState("idle", "Tap to speak");
           setTimeout(startListening, 1000);
@@ -883,7 +883,7 @@
       persistState();
       render();
 
-      var welcomeQuery = "Hi, welcome me to Bella Vita store and tell me how you can help";
+      var welcomeQuery = "Hello, Welcome to Bella AI! I am your AI assistant to guide you through the process. Here are the bestselling products, what would you like to view? Namaste, Bella AI mein aapka swagat hai! Main aapki AI assistant hoon, aapko guide karne ke liye. Ye rahe bestselling products, aap kya dekhna chahenge?";
       voiceMessages.push({ role: "user", content: welcomeQuery });
       sendToChat(welcomeQuery);
     }
