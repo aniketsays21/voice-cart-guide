@@ -343,6 +343,32 @@
       .trim();
   }
 
+  // ── Fallback helpers for auto-search ────────────────────────────
+  function looksLikeProductRecommendation(text) {
+    if (!text) return false;
+    var lower = text.toLowerCase();
+    // Price indicators
+    var pricePattern = /(₹|rs\.?|rupees?|mrp|price)\s*\d/i;
+    if (pricePattern.test(text)) return true;
+    // Multiple product-like mentions (capitalized multi-word names near prices)
+    var productMentions = (text.match(/[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+/g) || []).length;
+    if (productMentions >= 2) return true;
+    // Keywords indicating product talk
+    var keywords = ["perfume", "fragrance", "body wash", "shower gel", "gift set", "combo", "deo", "attar", "skincare", "moisturizer"];
+    var keywordCount = keywords.filter(function (k) { return lower.includes(k); }).length;
+    if (keywordCount >= 2) return true;
+    return false;
+  }
+
+  function simplifyQuery(query) {
+    if (!query) return "";
+    var fillerWords = ["mujhe", "muje", "dikhao", "dikha", "do", "suggest", "karo", "show", "me", "please", "kuch", "accha", "best", "batao", "bata", "chahiye", "can", "you", "i", "want", "need", "looking", "for", "the", "a", "an", "some", "hai", "hain", "ke", "ki", "ka", "ko", "se", "mein", "aur", "ya", "bhi", "toh", "na", "nahi"];
+    var words = query.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(function (w) {
+      return w.length > 1 && fillerWords.indexOf(w) === -1;
+    });
+    return words.slice(0, 4).join(" ");
+  }
+
   // ── Widget ─────────────────────────────────────────────────────────
   function createWidget(config) {
     var apiUrl = config.apiUrl;
@@ -822,6 +848,18 @@
           }
         }
       });
+
+      // Fallback: if AI talked about products but forgot the action block, auto-search
+      var hasNavAction = actions.some(function (a) {
+        return a.type === "navigate_to_search" || a.type === "navigate_to_collection" || a.type === "open_product";
+      });
+      if (isShopifyPlatform && !hasNavAction && !pendingNavigation && looksLikeProductRecommendation(fullResponse) && query) {
+        var sq = simplifyQuery(query);
+        if (sq) {
+          console.log("[AI Widget] Fallback auto-search for:", sq);
+          pendingNavigation = "/search?q=" + encodeURIComponent(sq);
+        }
+      }
 
       isWelcomeLoading = false;
 
