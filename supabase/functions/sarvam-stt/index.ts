@@ -136,7 +136,7 @@ Deno.serve(async (req) => {
 
     const audioBlob = new Blob([binaryAudio], { type: resolvedMime });
 
-    // --- Fallback chain: Sarvam Key1 -> Sarvam Key2 -> ElevenLabs ---
+    // --- Fallback chain: ElevenLabs first (Sarvam STT returning 404) -> Sarvam Key1 -> Sarvam Key2 ---
     const sarvamKey1 = Deno.env.get("SARVAM_API_KEY");
     const sarvamKey2 = Deno.env.get("SARVAM_API_KEY_2");
     const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY");
@@ -144,8 +144,19 @@ Deno.serve(async (req) => {
     let result: { ok: boolean; status: number; transcript?: string; language_code?: string } | null = null;
     let provider = "unknown";
 
-    // Try Sarvam Key 1
-    if (sarvamKey1) {
+    // Try ElevenLabs first (Sarvam STT is currently returning 404)
+    if (elevenLabsKey) {
+      console.log("STT: Trying ElevenLabs first...");
+      result = await tryElevenLabsSTT(elevenLabsKey, audioBlob, ext);
+      if (result.ok) { provider = "elevenlabs"; }
+      else {
+        console.log(`STT: ElevenLabs failed (${result.status}), trying Sarvam...`);
+        result = null;
+      }
+    }
+
+    // Fallback: Try Sarvam Key 1
+    if (!result && sarvamKey1) {
       console.log("STT: Trying Sarvam key1...");
       result = await trySarvamSTT(sarvamKey1, audioBlob);
       if (result.ok) { provider = "sarvam-key1"; }
@@ -155,21 +166,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Try Sarvam Key 2
+    // Fallback: Try Sarvam Key 2
     if (!result && sarvamKey2) {
       result = await trySarvamSTT(sarvamKey2, audioBlob);
       if (result.ok) { provider = "sarvam-key2"; }
       else {
-        console.log(`STT: Sarvam key2 failed (${result.status}), falling back to ElevenLabs...`);
+        console.log(`STT: Sarvam key2 failed (${result.status})`);
         result = null;
       }
-    }
-
-    // Try ElevenLabs
-    if (!result && elevenLabsKey) {
-      result = await tryElevenLabsSTT(elevenLabsKey, audioBlob, ext);
-      if (result.ok) { provider = "elevenlabs"; }
-      else { result = null; }
     }
 
     if (!result || !result.ok) {

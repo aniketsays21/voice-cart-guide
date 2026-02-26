@@ -186,7 +186,10 @@ const Chat: React.FC = () => {
     for (const act of actions) {
       if (act.action === "schedule_call") {
         // Schedule a callback via the edge function
+        console.log("[CALLBACK] schedule_call action detected:", { phone: act.phoneNumber, time: act.scheduledTime, context: act.context });
         if (act.phoneNumber && act.scheduledTime) {
+          console.log("[CALLBACK] Both phone and time present, invoking schedule-call edge function...");
+          toast.info(`Scheduling callback for ${act.scheduledTime}...`);
           fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schedule-call`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
@@ -327,7 +330,7 @@ const Chat: React.FC = () => {
     vadStopRef.current();
   }, []);
 
-  const vad = useVAD(doStopRecording, 2500, 0.015);
+  const vad = useVAD(doStopRecording, 1500, 0.015);
   vadStopRef.current = vad.stop;
 
   // Internal start recording
