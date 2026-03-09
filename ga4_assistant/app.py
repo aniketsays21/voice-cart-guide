@@ -2,7 +2,7 @@ import os
 import json
 from dotenv import load_dotenv
 import streamlit as st
-from openai import OpenAI
+import anthropic
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunReportRequest,
@@ -18,11 +18,11 @@ from google.oauth2 import service_account
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID")
 SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "service-account-key.json")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE,
@@ -53,16 +53,16 @@ Examples:
 """
 
 
-def parse_query_with_openai(user_query: str) -> dict:
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+def parse_query_with_claude(user_query: str) -> dict:
+    response = claude.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"User query: {user_query}\n\nReturn only JSON:"},
+            {"role": "user", "content": f"User query: {user_query}\n\nReturn only JSON:"}
         ],
-        temperature=0,
     )
-    text = response.choices[0].message.content.strip()
+    text = response.content[0].text.strip()
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -113,7 +113,7 @@ def run_ga4_report(params: dict) -> list[dict]:
     return results
 
 
-def summarize_with_openai(user_query: str, data: list[dict]) -> str:
+def summarize_with_claude(user_query: str, data: list[dict]) -> str:
     data_str = json.dumps(data[:50], indent=2)
     prompt = f"""The user asked: "{user_query}"
 
@@ -122,11 +122,12 @@ Here is the GA4 data retrieved:
 
 Give a clear, concise summary of this data answering the user's question. Use bullet points where helpful. Include key numbers."""
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+    response = claude.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.choices[0].message.content
+    return response.content[0].text
 
 
 # ── Streamlit UI ──────────────────────────────────────────────────────────────
@@ -149,9 +150,9 @@ with st.form("query_form", clear_on_submit=True):
 if submitted and user_input.strip():
     with st.spinner("Fetching data from GA4..."):
         try:
-            params = parse_query_with_openai(user_input)
+            params = parse_query_with_claude(user_input)
             data = run_ga4_report(params)
-            summary = summarize_with_openai(user_input, data)
+            summary = summarize_with_claude(user_input, data)
 
             st.session_state.history.append({
                 "query": user_input,
