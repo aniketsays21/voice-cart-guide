@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Secrets
+ga4_assistant/service-account-key.json
+ga4_assistant/.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
