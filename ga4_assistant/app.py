@@ -2,7 +2,7 @@ import os
 import json
 from dotenv import load_dotenv
 import streamlit as st
-import google.generativeai as genai
+from openai import OpenAI
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunReportRequest,
@@ -18,12 +18,11 @@ from google.oauth2 import service_account
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID")
 SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "service-account-key.json")
 
-genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE,
@@ -54,11 +53,16 @@ Examples:
 """
 
 
-def parse_query_with_gemini(user_query: str) -> dict:
-    response = gemini.generate_content(
-        f"{SYSTEM_PROMPT}\n\nUser query: {user_query}\n\nReturn only JSON:"
+def parse_query_with_openai(user_query: str) -> dict:
+    response = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"User query: {user_query}\n\nReturn only JSON:"},
+        ],
+        temperature=0,
     )
-    text = response.text.strip()
+    text = response.choices[0].message.content.strip()
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -109,7 +113,7 @@ def run_ga4_report(params: dict) -> list[dict]:
     return results
 
 
-def summarize_with_gemini(user_query: str, data: list[dict]) -> str:
+def summarize_with_openai(user_query: str, data: list[dict]) -> str:
     data_str = json.dumps(data[:50], indent=2)
     prompt = f"""The user asked: "{user_query}"
 
@@ -118,8 +122,11 @@ Here is the GA4 data retrieved:
 
 Give a clear, concise summary of this data answering the user's question. Use bullet points where helpful. Include key numbers."""
 
-    response = gemini.generate_content(prompt)
-    return response.text
+    response = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
 
 
 # ── Streamlit UI ──────────────────────────────────────────────────────────────
@@ -142,9 +149,9 @@ with st.form("query_form", clear_on_submit=True):
 if submitted and user_input.strip():
     with st.spinner("Fetching data from GA4..."):
         try:
-            params = parse_query_with_gemini(user_input)
+            params = parse_query_with_openai(user_input)
             data = run_ga4_report(params)
-            summary = summarize_with_gemini(user_input, data)
+            summary = summarize_with_openai(user_input, data)
 
             st.session_state.history.append({
                 "query": user_input,

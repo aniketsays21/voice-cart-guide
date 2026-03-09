@@ -1,5 +1,5 @@
 streamlit
 google-analytics-data
 google-auth
-google-generativeai
+openai
 python-dotenv
